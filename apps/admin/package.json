@@ -1,0 +1,40 @@
+{
+  "name": "@smartbimbel/admin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SmartBimbel internal admin panel (Next.js)",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sentry/nextjs": "^10.70.0",
+    "@smartbimbel/design-tokens": "workspace:*",
+    "@smartbimbel/shared": "workspace:*",
+    "@smartbimbel/ui": "workspace:*",
+    "firebase": "^10.14.1",
+    "lucide-react": "^0.451.0",
+    "next": "14.2.35",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.5.0",
+    "@testing-library/react": "^16.0.1",
+    "@types/node": "^20.16.10",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "14.2.35",
+    "jsdom": "^25.0.1",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

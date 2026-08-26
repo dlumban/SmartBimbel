@@ -1,0 +1,81 @@
+name: Lint, Test, Build
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ltb-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-admin-api:
+    name: Lint, typecheck, test, build (web/admin/api)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  mobile:
+    name: Flutter analyze/test/build (apps/mobile)
+    runs-on: ubuntu-latest
+    # apps/mobile is currently deferred (see apps/mobile/README.md) - this
+    # job intentionally no-ops until Flutter scaffolding lands, rather than
+    # failing CI on a directory that doesn't exist yet.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for Flutter project
+        id: check
+        run: |
+          if [ -f apps/mobile/pubspec.yaml ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "apps/mobile has no pubspec.yaml yet - skipping (see apps/mobile/README.md)."
+          fi
+      - uses: subosito/flutter-action@v2
+        if: steps.check.outputs.exists == 'true'
+        with:
+          channel: stable
+      - name: flutter analyze
+        if: steps.check.outputs.exists == 'true'
+        working-directory: apps/mobile
+        run: flutter analyze
+      - name: flutter test
+        if: steps.check.outputs.exists == 'true'
+        working-directory: apps/mobile
+        run: flutter test
+      - name: flutter build apk (debug, for manual QA install)
+        if: steps.check.outputs.exists == 'true'
+        working-directory: apps/mobile
+        run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        if: steps.check.outputs.exists == 'true'
+        with:
+          name: app-debug-apk
+          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk

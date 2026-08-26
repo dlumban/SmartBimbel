@@ -1,0 +1,51 @@
+name: Deploy Staging
+
+# Runs on every push to main once lint-test-build has passed on that commit.
+# INACTIVE until the secrets below are configured (see docs/infrastructure.md)
+# and the corresponding Railway/Vercel projects exist - see Task 0.3.
+on:
+  workflow_run:
+    workflows: ["Lint, Test, Build"]
+    branches: [main]
+    types: [completed]
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+jobs:
+  deploy-api:
+    name: Deploy API to Railway (staging)
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Railway
+        uses: bervProject/railway-deploy@v1.4.0
+        with:
+          railway_token: ${{ secrets.RAILWAY_STAGING_TOKEN }}
+          service: smartbimbel-api-staging
+
+  deploy-web:
+    name: Deploy web + admin to Vercel (staging)
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [web, admin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Deploy ${{ matrix.app }} to Vercel
+        working-directory: apps/${{ matrix.app }}
+        run: npx vercel deploy --token=${{ secrets.VERCEL_TOKEN }} --yes
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ matrix.app == 'web' && secrets.VERCEL_WEB_PROJECT_ID || secrets.VERCEL_ADMIN_PROJECT_ID }}

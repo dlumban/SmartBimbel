@@ -1,0 +1,54 @@
+name: Deploy Production
+
+# Triggered by a version tag (v0.1.0, v0.2.0, ...). Requires manual approval
+# via the "production" GitHub Environment, which must be configured with
+# required reviewers before this workflow can run past the approval gate.
+# INACTIVE until secrets + the production Railway/Vercel projects exist.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  approval-gate:
+    name: Await manual approval
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: echo "Approved for production deploy of ${{ github.ref_name }}"
+
+  deploy-api:
+    name: Deploy API to Railway (production)
+    needs: approval-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Railway
+        uses: bervProject/railway-deploy@v1.4.0
+        with:
+          railway_token: ${{ secrets.RAILWAY_PRODUCTION_TOKEN }}
+          service: smartbimbel-api-production
+
+  deploy-web:
+    name: Deploy web + admin to Vercel (production)
+    needs: approval-gate
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [web, admin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Deploy ${{ matrix.app }} to Vercel (production)
+        working-directory: apps/${{ matrix.app }}
+        run: npx vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }} --yes
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ matrix.app == 'web' && secrets.VERCEL_WEB_PROJECT_ID || secrets.VERCEL_ADMIN_PROJECT_ID }}

@@ -1,0 +1,42 @@
+name: smartbimbel
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: smartbimbel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: smartbimbel
+      POSTGRES_PASSWORD: smartbimbel
+      POSTGRES_DB: smartbimbel_dev
+    ports:
+      # Host port 5433 (not 5432) to avoid colliding with any other local
+      # Postgres instance already bound to 5432.
+      - "5433:5432"
+    volumes:
+      - smartbimbel_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartbimbel -d smartbimbel_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: smartbimbel-redis
+    restart: unless-stopped
+    ports:
+      # Host port 6380 (not 6379) to avoid colliding with other local Redis
+      # containers (e.g. an unrelated project's redis on the default port).
+      - "6380:6379"
+    volumes:
+      - smartbimbel_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  smartbimbel_postgres_data:
+  smartbimbel_redis_data:

@@ -1,0 +1,691 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  STUDENT
+  TUTOR
+  ADMIN
+}
+
+// PRD §5: two admin sub-roles. Meaningful only when User.role == ADMIN -
+// SUPER_ADMIN has full access (payout approval, role management, manual
+// booking overrides); SUPPORT handles day-to-day user/booking/dispute
+// operations but cannot touch anything with direct financial or
+// access-control effect (Task 7.1's own scope text).
+enum AdminRole {
+  SUPER_ADMIN
+  SUPPORT
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum VerificationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum TeachingMode {
+  ONLINE
+  OFFLINE
+}
+
+enum BookingStatus {
+  REQUESTED
+  // Tutor suggested a different time than the student originally asked for
+  // (Task 3.3) - awaiting the student's response to that counter-offer.
+  COUNTER_PROPOSED
+  ACCEPTED
+  DECLINED
+  // Tutor never responded within the window (Task 3.2) - distinct from
+  // DECLINED so the two can be reported on separately.
+  EXPIRED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  // Either party proposed a new time for an already-ACCEPTED booking (Task
+  // 3.5) - distinct from COUNTER_PROPOSED, which only ever happens before
+  // the booking is first accepted and whose decline ends the booking
+  // entirely. Declining a reschedule proposal just keeps the original time.
+  RESCHEDULE_PROPOSED
+}
+
+enum CancellationReasonCode {
+  SCHEDULE_CONFLICT
+  ILLNESS
+  FOUND_ALTERNATIVE
+  NO_LONGER_NEEDED
+  OTHER
+}
+
+enum NotificationType {
+  BOOKING_REQUESTED
+  BOOKING_ACCEPTED
+  BOOKING_DECLINED
+  BOOKING_COUNTER_PROPOSED
+  BOOKING_EXPIRED
+  BOOKING_RESCHEDULE_PROPOSED
+  BOOKING_RESCHEDULE_ACCEPTED
+  BOOKING_RESCHEDULE_DECLINED
+  BOOKING_CANCELLED
+  BOOKING_NO_SHOW_REPORTED
+  BOOKING_REMINDER_24H
+  BOOKING_REMINDER_1H
+  MESSAGE_RECEIVED
+  BOOKING_CONFIRMED
+  PAYMENT_FAILED
+  PAYOUT_REQUESTED
+  PAYOUT_STATUS_CHANGED
+  DISPUTE_RAISED
+  DISPUTE_RESOLVED
+  // Sent to the student once a session is marked COMPLETED (Task 6.4),
+  // whether that happened via the tutor's manual PATCH .../complete or the
+  // auto-complete safety net - either way, this is what nudges them to
+  // leave a review.
+  REVIEW_PROMPT
+  // Sent to the student when the tutor directly edits a CONFIRMED session
+  // they scheduled themselves (BookingsService.editForTutor).
+  SESSION_EDITED
+}
+
+enum TransactionStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED_REFUND
+  RESOLVED_NO_REFUND
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id             String     @id @default(cuid())
+  // Null until the user completes role selection (Sprint 1, Task 1.3) -
+  // a Firebase-authenticated user exists before they've chosen Student/Tutor.
+  role           UserRole?
+  // Meaningful only when role == ADMIN (Task 7.1) - null for every
+  // Student/Tutor account. Set directly by a Super Admin via the role
+  // management action; there's no self-service path to becoming an admin.
+  adminRole      AdminRole?
+  // Missing from the original Sprint 0 schema - discovered as a genuine
+  // blocker while building Sprint 2's tutor listing (PRD §6.1.B requires a
+  // name on every tutor card). Collected during onboarding (Sprint 1 forms,
+  // retrofitted) via PATCH /users/me.
+  name           String?
+  phone          String?    @unique
+  email          String?    @unique
+  // Null for a student an admin created directly (Add Student, admin panel) -
+  // that account has no Firebase identity until the student eventually signs
+  // in themselves, at which point AuthService.exchangeToken claims this row
+  // by phone/email instead of creating a duplicate.
+  firebaseUid    String?    @unique
+  status         UserStatus @default(ACTIVE)
+  // Minimal notification preference for MVP (Task 3.6) - a full preference
+  // center (per-channel, per-event-type) is post-MVP; this is the one
+  // opt-out PRD explicitly calls out ("allow opting out of WhatsApp if it
+  // proves too aggressive"). Push/email are never optional in MVP.
+  whatsappOptOut Boolean    @default(false)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  tutorProfile                TutorProfile?
+  studentProfile              StudentProfile?
+  messages                    Message[]
+  cancelledBookings           Booking[]              @relation("BookingCancelledBy")
+  requestedBookings           Booking[]              @relation("BookingRequestedBy")
+  rescheduleProposals         Booking[]              @relation("BookingRescheduleProposedBy")
+  noShowReports               Booking[]              @relation("BookingNoShowReportedBy")
+  meetingLinksSet             Booking[]              @relation("BookingMeetingSetBy")
+  completedBookings           Booking[]              @relation("BookingCompletedBy")
+  bookingStatusChanges        BookingStatusHistory[]
+  bookingAttachmentsUploaded  BookingAttachment[]
+  notifications               Notification[]
+  reportsFiled                MessageReport[]        @relation("MessageReportsFiled")
+  reportsReceived             MessageReport[]        @relation("MessageReportsReceived")
+  conversationBlocksInitiated ConversationBlock[]    @relation("ConversationBlocksInitiated")
+  conversationBlocksReceived  ConversationBlock[]    @relation("ConversationBlocksReceived")
+  payoutsProcessed            Payout[]
+  disputesRaised              Dispute[]              @relation("DisputesRaised")
+  disputesResolved            Dispute[]              @relation("DisputesResolved")
+  auditLogs                   AuditLog[]
+  accessLinks                 AccessLink[]
+  // Set only when this STUDENT account was created by a tutor (not admin, not
+  // self-registered) via the tutor-facing "add student" flow - null for every
+  // other case. Scopes this student's visibility to that one tutor (private
+  // roster) and is the sole authorization check for that tutor generating an
+  // access link for them.
+  addedByTutorId               String?
+  addedByTutor                 User?                  @relation("StudentsAddedByTutor", fields: [addedByTutorId], references: [id], onDelete: SetNull)
+  studentsAdded                User[]                 @relation("StudentsAddedByTutor")
+
+  @@index([role])
+  @@index([addedByTutorId])
+}
+
+// Sign-in link an admin/tutor can hand a STUDENT who has no way to log in
+// themselves (e.g. an Add Student account with no Firebase identity yet).
+// Only the tokenHash is stored - the raw token is returned once, at
+// generation time. Links do not time-expire; they stay valid until
+// deactivated (deactivatedAt set). usedAt is kept for audit of last redeem.
+model AccessLink {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash      String    @unique
+  // Null = never expires. Legacy rows may still have a timestamp.
+  expiresAt      DateTime?
+  usedAt         DateTime?
+  deactivatedAt  DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Master data
+// ---------------------------------------------------------------------------
+
+model Subject {
+  id   String @id @default(cuid())
+  name String @unique
+
+  tutors             TutorProfile[]   @relation("TutorSubjects")
+  studentsInterested StudentProfile[] @relation("StudentSubjectsOfInterest")
+  bookings           Booking[]
+}
+
+model GradeLevel {
+  id   String @id @default(cuid())
+  name String @unique
+
+  tutors   TutorProfile[]   @relation("TutorGradeLevels")
+  students StudentProfile[] @relation("StudentGradeLevel")
+}
+
+// ---------------------------------------------------------------------------
+// Profiles
+// ---------------------------------------------------------------------------
+
+model TutorProfile {
+  id                    String             @id @default(cuid())
+  userId                String             @unique
+  user                  User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bio                   String?
+  photoUrl              String?
+  education             String?
+  hourlyRate            Int?
+  teachingModes         TeachingMode[]
+  city                  String?
+  // Local-disk references (see StorageService) until Cloudinary/Firebase
+  // Storage is provisioned - docs/third-party-setup.md. Never exposed as a
+  // public URL; served only via the authenticated document-download route.
+  ktpDocumentPath       String?
+  diplomaDocumentPath   String?
+  // Null while the tutor is still working through the multi-step form -
+  // set once they submit for review. verificationStatus alone can't carry
+  // this distinction: it defaults to PENDING at row creation, before the
+  // profile is even complete, so Task 1.6's admin queue filters on this
+  // timestamp being non-null, not on verificationStatus.
+  profileSubmittedAt    DateTime?
+  rejectionReason       String?
+  verificationStatus    VerificationStatus @default(PENDING)
+  // Payout destination (Task 5.5) - captured once, reused for every payout
+  // request; each individual Payout also snapshots these at request time
+  // (below) so a later bank-detail change never rewrites payout history.
+  bankName              String?
+  bankAccountNumber     String?
+  bankAccountHolderName String?
+  // Recomputed on every non-flagged Review write for this tutor's bookings
+  // (Task 6.5) - null/0 until the tutor's first review, so distinct from
+  // "rated 0". Excludes flagged reviews from the public-facing average
+  // until an admin clears them (Task 6.4's moderation flag).
+  averageRating         Float?
+  reviewCount           Int                @default(0)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  subjects          Subject[]          @relation("TutorSubjects")
+  gradeLevels       GradeLevel[]       @relation("TutorGradeLevels")
+  bookings          Booking[]          @relation("TutorBookings")
+  payouts           Payout[]
+
+  @@index([city])
+  @@index([verificationStatus])
+  @@index([hourlyRate])
+}
+
+model StudentProfile {
+  id                String        @id @default(cuid())
+  userId            String        @unique
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gradeLevelId      String?
+  gradeLevel        GradeLevel?   @relation("StudentGradeLevel", fields: [gradeLevelId], references: [id])
+  preferredLocation String?
+  preferredMode     TeachingMode?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  subjectsOfInterest Subject[] @relation("StudentSubjectsOfInterest")
+  bookings           Booking[] @relation("StudentBookings")
+}
+
+// ---------------------------------------------------------------------------
+// Scheduling & bookings
+// ---------------------------------------------------------------------------
+
+model Booking {
+  id                         String                  @id @default(cuid())
+  studentId                  String
+  student                    StudentProfile          @relation("StudentBookings", fields: [studentId], references: [id], onDelete: Cascade)
+  tutorId                    String
+  tutor                      TutorProfile            @relation("TutorBookings", fields: [tutorId], references: [id], onDelete: Cascade)
+  subjectId                  String
+  subject                    Subject                 @relation(fields: [subjectId], references: [id])
+  // Set when this booking was created against an admin-managed fixed-price
+  // package - overrides the normal hourlyRate x duration pricing (priceAmount
+  // is derived from the package's totalPrice/sessionCount instead).
+  packageId                  String?
+  package                    TutoringPackage?        @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  scheduledAt                DateTime
+  durationMinutes            Int
+  // Locked in at booking-request time from the tutor's hourlyRate x
+  // (durationMinutes/60) (Task 5.2) - payment always charges this amount,
+  // never the tutor's *current* rate, in case it changed since the
+  // request was made. Null for bookings created before this migration.
+  priceAmount                Int?
+  mode                       TeachingMode
+  status                     BookingStatus           @default(REQUESTED)
+  notes                      String?
+  // Deadline for the tutor to respond (Task 3.2) - set at creation time
+  // (createdAt + response window) and used by the scheduled expiry job.
+  respondByAt                DateTime?
+  // Tutor's suggested alternative when status = COUNTER_PROPOSED (Task 3.3),
+  // or either party's suggested alternative when status =
+  // RESCHEDULE_PROPOSED (Task 3.5) - the two flows share this field since
+  // only one such proposal can be pending on a booking at a time. Not tied
+  // to a specific AvailabilitySlot row - the proposer names a time that
+  // works for them, checked against the tutor's schedule at the
+  // application level rather than requiring a pre-existing slot row.
+  proposedScheduledAt        DateTime?
+  // Who created this booking (Task 3.1, extended for tutor-initiated
+  // bookings) - null for every booking created before this field existed,
+  // which is treated as "student-initiated" (the only possibility back
+  // then). Lets the service swap which real-world role plays "TUTOR" in
+  // the REQUESTED-state transitions below when a tutor scheduled the
+  // session instead of a student requesting it, without the state machine
+  // table itself needing any notion of who initiated.
+  requestedByUserId          String?
+  requestedByUser            User?                   @relation("BookingRequestedBy", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  // Who is currently awaiting a response on a RESCHEDULE_PROPOSED booking
+  // (Task 3.5) - unlike COUNTER_PROPOSED (always tutor-initiated, so the
+  // responder is structurally always the student), either party can
+  // initiate a reschedule, so the proposer has to be tracked explicitly to
+  // stop them from "accepting" their own proposal.
+  rescheduleProposedByUserId String?
+  rescheduleProposedByUser   User?                   @relation("BookingRescheduleProposedBy", fields: [rescheduleProposedByUserId], references: [id], onDelete: SetNull)
+  // Set when a TUTOR declines a REQUESTED booking or a STUDENT declines a
+  // COUNTER_PROPOSED one (Task 3.3) - distinct from cancellationReason,
+  // which only applies to a booking that had already reached ACCEPTED or
+  // later (Task 3.5).
+  declineReason              String?
+  cancelledAt                DateTime?
+  cancellationReasonCode     CancellationReasonCode?
+  cancellationReason         String?
+  cancelledByUserId          String?
+  cancelledByUser            User?                   @relation("BookingCancelledBy", fields: [cancelledByUserId], references: [id], onDelete: SetNull)
+  // Whether this cancellation fell inside the free-cancellation window
+  // (Task 3.5) - snapshotted at cancel time rather than derived later,
+  // since scheduledAt itself isn't a stable reference point (a booking can
+  // be rescheduled). No fee is charged yet (Sprint 5 wires up payments);
+  // this is the data record future enforcement reads from.
+  isLateCancellation         Boolean                 @default(false)
+  noShowReported             Boolean                 @default(false)
+  noShowReportedByUserId     String?
+  noShowReportedByUser       User?                   @relation("BookingNoShowReportedBy", fields: [noShowReportedByUserId], references: [id], onDelete: SetNull)
+  noShowReportedAt           DateTime?
+  // Set by either party via chat (Task 4.3) - a Zoom/Meet URL for an
+  // ONLINE booking or a plain address for an OFFLINE one, matching
+  // `mode`. Stored on Booking (not parsed out of chat messages) so
+  // Sprint 6's "Join Meeting" button has a reliable field to read.
+  meetingLink                String?
+  meetingAddress             String?
+  meetingSetByUserId         String?
+  meetingSetByUser           User?                   @relation("BookingMeetingSetBy", fields: [meetingSetByUserId], references: [id], onDelete: SetNull)
+  meetingSetAt               DateTime?
+  // Set when a CONFIRMED booking becomes COMPLETED (Task 6.1) - either the
+  // tutor manually marking it done (completedByUserId set) or the
+  // auto-complete safety-net job (completedByUserId null - "the system").
+  completedAt                DateTime?
+  completedByUserId          String?
+  completedByUser            User?                   @relation("BookingCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
+  // Free-text only, tutor-editable, student-read-only (Task 6.3) -
+  // deliberately not a structured progress-report model, which is
+  // explicitly PRD §6.2 (Phase 2) scope.
+  sessionNotes               String?
+  sessionNotesUpdatedAt      DateTime?
+  createdAt                  DateTime                @default(now())
+  updatedAt                  DateTime                @updatedAt
+
+  conversation  Conversation?
+  transaction   Transaction?
+  review        Review?
+  statusHistory BookingStatusHistory[]
+  disputes      Dispute[]
+  attachments   BookingAttachment[]
+
+  @@index([studentId])
+  @@index([tutorId])
+  @@index([status])
+}
+
+// Admin-managed fixed-price bundle a tutor can pick when scheduling a
+// session (packages feature) - a reusable pricing template, not a stateful
+// multi-session credit ledger: each booking that references a package
+// independently gets priceAmount = round(totalPrice / sessionCount) and
+// durationMinutes = this package's durationMinutes. Never hard-deleted
+// (isActive toggle only) since historical bookings may reference it
+// permanently, same convention as Subject/GradeLevel.
+model TutoringPackage {
+  id              String    @id @default(cuid())
+  name            String
+  sessionCount    Int
+  durationMinutes Int
+  totalPrice      Int
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  bookings        Booking[]
+}
+
+// Backs both an inline image embedded in sessionNotes' HTML (kind
+// INLINE_IMAGE, referenced from the notes text as `attachment:<id>`, never
+// a real URL - see sanitizeHtml.ts) and a standalone file attached to the
+// session report (kind DOCUMENT, listed/downloaded separately). One table
+// for both keeps this feature as lightweight as sessionNotes itself rather
+// than introducing a structured document model (PRD §6.2/Phase 2 is still
+// out of scope).
+enum BookingAttachmentKind {
+  INLINE_IMAGE
+  DOCUMENT
+}
+
+model BookingAttachment {
+  id               String                @id @default(cuid())
+  bookingId        String
+  booking          Booking               @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  uploadedByUserId String
+  uploadedByUser   User                  @relation(fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+  kind             BookingAttachmentKind
+  filename         String
+  mimeType         String
+  sizeBytes        Int
+  storagePath      String
+  createdAt        DateTime              @default(now())
+
+  @@index([bookingId])
+}
+
+// Immutable audit trail of every booking status change (Task 3.3) - who
+// changed what, when, and (for declines) why. Read by the dispute-handling
+// tooling added in Sprint 5/7.
+model BookingStatusHistory {
+  id              String         @id @default(cuid())
+  bookingId       String
+  booking         Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  fromStatus      BookingStatus?
+  toStatus        BookingStatus
+  changedByUserId String?
+  changedByUser   User?          @relation(fields: [changedByUserId], references: [id], onDelete: SetNull)
+  reason          String?
+  createdAt       DateTime       @default(now())
+
+  @@index([bookingId])
+}
+
+// Minimal in-app notification record (Task 3.3) - the durable "a
+// notification fired" fact. Push/email/WhatsApp delivery channels are
+// layered on top of this in Task 3.6; this table is what that module reads
+// from and what any future in-app notification bell would query.
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType
+  data      Json
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Messaging
+// ---------------------------------------------------------------------------
+
+model Conversation {
+  id              String   @id @default(cuid())
+  bookingId       String   @unique
+  booking         Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  // Set once the Stream channel is successfully created (Task 4.1) - best
+  // effort, not required for the Conversation row itself to exist or for
+  // our own REST message endpoints to work. Null means either Stream
+  // isn't configured in this environment or channel creation hasn't run
+  // yet; never blocks booking creation.
+  streamChannelId String?
+  createdAt       DateTime @default(now())
+
+  messages Message[]
+  reports  MessageReport[]
+  blocks   ConversationBlock[]
+}
+
+model Message {
+  id              String       @id @default(cuid())
+  conversationId  String
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId        String
+  sender          User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  body            String
+  // Set when this row was mirrored in from a Stream webhook event (Task
+  // 4.1) rather than created directly via our own POST /messages -
+  // unique so a retried webhook delivery can't double-insert the same
+  // Stream message.
+  streamMessageId String?      @unique
+  createdAt       DateTime     @default(now())
+
+  reports MessageReport[]
+
+  @@index([conversationId])
+}
+
+// A user reporting either a specific message or the other participant in
+// general (Task 4.4) - messageId is nullable to cover the latter. Full
+// admin review tooling is Sprint 7 scope; this is just the durable record.
+model MessageReport {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  messageId      String?
+  message        Message?     @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  reporterId     String
+  reporter       User         @relation("MessageReportsFiled", fields: [reporterId], references: [id], onDelete: Cascade)
+  reportedUserId String
+  reportedUser   User         @relation("MessageReportsReceived", fields: [reportedUserId], references: [id], onDelete: Cascade)
+  reason         String
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+  @@index([reportedUserId])
+}
+
+// Scoped to a single conversation, not platform-wide (Task 4.4's explicit
+// MVP scope) - the blocked party can no longer send messages in this
+// conversation, checked on every message send.
+model ConversationBlock {
+  id              String       @id @default(cuid())
+  conversationId  String
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  blockedByUserId String
+  blockedByUser   User         @relation("ConversationBlocksInitiated", fields: [blockedByUserId], references: [id], onDelete: Cascade)
+  blockedUserId   String
+  blockedUser     User         @relation("ConversationBlocksReceived", fields: [blockedUserId], references: [id], onDelete: Cascade)
+  createdAt       DateTime     @default(now())
+
+  @@unique([conversationId, blockedByUserId])
+  @@index([conversationId])
+}
+
+// ---------------------------------------------------------------------------
+// Payments
+// ---------------------------------------------------------------------------
+
+model Transaction {
+  id             String            @id @default(cuid())
+  bookingId      String            @unique
+  booking        Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  // Gross amount charged (== Booking.priceAmount at the time of payment).
+  amount         Int
+  // Frozen at creation time using whatever PLATFORM_COMMISSION_RATE was
+  // configured then (Task 5.3) - changing the env var later never
+  // recalculates this. Net owed to the tutor is always (amount - commission),
+  // computed on read rather than stored, so there's only ever one number
+  // to keep consistent.
+  commission     Int
+  gatewayRef     String?
+  // The actual amount refunded (Task 5.6) - null until a refund happens,
+  // then always set (may be less than `amount` for a partial refund, or
+  // equal to it for a full one - always readable from this one field).
+  refundedAmount Int?
+  status         TransactionStatus @default(PENDING)
+  paidAt         DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  disputes Dispute[]
+}
+
+model Payout {
+  id                    String       @id @default(cuid())
+  tutorId               String
+  tutor                 TutorProfile @relation(fields: [tutorId], references: [id], onDelete: Cascade)
+  amount                Int
+  status                PayoutStatus @default(PENDING)
+  // Snapshotted from TutorProfile at request time (Task 5.5) - a later
+  // change to the tutor's bank details never rewrites payout history.
+  bankName              String?
+  bankAccountNumber     String?
+  bankAccountHolderName String?
+  bankAccountRef        String?
+  processedByUserId     String?
+  processedByUser       User?        @relation(fields: [processedByUserId], references: [id], onDelete: SetNull)
+  processedAt           DateTime?
+  failureReason         String?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  @@index([tutorId])
+}
+
+// Underlying data model for PRD §6.1.E's "basic refund and dispute
+// handling (admin-mediated)" - the review/resolution UI is Sprint 7,
+// Task 7.5; this is just the mechanics (Task 5.6).
+model Dispute {
+  id               String        @id @default(cuid())
+  bookingId        String
+  booking          Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  transactionId    String?
+  transaction      Transaction?  @relation(fields: [transactionId], references: [id])
+  // Nullable so deleting the raiser's account can SET NULL instead of
+  // blocking the delete (RESTRICT) while booking rows still point at them.
+  raisedByUserId   String?
+  raisedByUser     User?         @relation("DisputesRaised", fields: [raisedByUserId], references: [id], onDelete: SetNull)
+  reason           String
+  status           DisputeStatus @default(OPEN)
+  resolutionNotes  String?
+  resolvedByUserId String?
+  resolvedByUser   User?         @relation("DisputesResolved", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  resolvedAt       DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([bookingId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Reviews
+// ---------------------------------------------------------------------------
+
+model Review {
+  id        String   @id @default(cuid())
+  bookingId String   @unique
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  rating    Int
+  text      String?
+  // Simple keyword-filter first pass (Task 6.4) - flagged reviews stay
+  // visible pending admin review (Sprint 7) rather than being blocked
+  // outright, to avoid false-positive censorship without a human look.
+  // Excluded from the tutor's public average while flagged.
+  flagged   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Admin
+// ---------------------------------------------------------------------------
+
+// Every admin-panel action that mutates something (Task 7.1) - append-only,
+// never updated or deleted, so "who did what, when" is always answerable
+// for a later dispute review. `targetType`/`targetId` are plain strings
+// rather than a typed union of FKs (a Booking, a Payout, a User, ... all
+// need to be targets) - this table intentionally doesn't enforce
+// referential integrity against its targets, matching how an audit trail
+// needs to outlive the record it describes.
+model AuditLog {
+  id          String   @id @default(cuid())
+  // Nullable, unlike every other actor field on this model's write path -
+  // deleting a User (Add Student's counterpart delete action) must never
+  // remove the audit trail of what that account did/had done to it, per
+  // this model's own append-only invariant above. SetNull keeps the row;
+  // it just loses the ability to resolve back to a live admin account.
+  adminUserId String?
+  adminUser   User?    @relation(fields: [adminUserId], references: [id], onDelete: SetNull)
+  action      String
+  targetType  String
+  targetId    String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([adminUserId])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+}

@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * shadcn-style semantic tokens, values derived from @smartbimbel/design-tokens'
+ * colors.ts (see the mapping comment at the bottom of that file) - not a new
+ * palette. Consumed via tailwind.config.ts's theme.extend.colors as
+ * hsl(var(--x) / <alpha-value>), alongside the existing raw color scales.
+ */
+:root {
+  --radius: 0.75rem;
+  --background: 210 40% 98%;
+  --foreground: 222.2 47.4% 11.2%;
+  --card: 0 0% 100%;
+  --card-foreground: 222.2 47.4% 11.2%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 47.4% 11.2%;
+  --primary: 243.4 75.4% 58.6%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --accent: 24.6 95% 53.1%;
+  --accent-foreground: 15.3 74.6% 27.8%;
+  --destructive: 0 72.2% 50.6%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 243.4 75.4% 58.6%;
+  --sidebar: 0 0% 100%;
+  --sidebar-foreground: 222.2 47.4% 11.2%;
+  --sidebar-primary: 243.4 75.4% 58.6%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 226.5 100% 93.9%;
+  --sidebar-accent-foreground: 244.5 57.9% 50.6%;
+  --sidebar-border: 214.3 31.8% 91.4%;
+  --sidebar-ring: 243.4 75.4% 58.6%;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+}
+
+.session-notes-editor p.is-editor-empty:first-child::before {
+  color: theme("colors.neutral.400");
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.session-notes-prose p,
+.session-notes-editor p {
+  margin-bottom: 0.5rem;
+}
+
+.session-notes-prose ul,
+.session-notes-editor ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+
+.session-notes-prose ol,
+.session-notes-editor ol {
+  list-style: decimal;
+  padding-left: 1.25rem;
+}
+
+.session-notes-prose h2,
+.session-notes-editor h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.session-notes-prose strong,
+.session-notes-editor strong {
+  font-weight: 600;
+}
