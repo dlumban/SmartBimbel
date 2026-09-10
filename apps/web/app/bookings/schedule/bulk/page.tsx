@@ -3,10 +3,10 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { LoadingSpinner } from "@smartbimbel/ui";
-import { useAuth } from "../../../src/hooks/useAuth";
-import { BookingCalendar } from "../../../src/components/BookingCalendar";
+import { useAuth } from "../../../../src/hooks/useAuth";
+import { BulkScheduleForm } from "../../../../src/components/BulkScheduleForm";
 
-export default function BookingsCalendarPage() {
+export default function BulkSchedulePage() {
   const { sessionUser, loading } = useAuth();
   const router = useRouter();
 
@@ -14,10 +14,14 @@ export default function BookingsCalendarPage() {
     if (loading) return;
     if (!sessionUser) {
       router.replace("/login");
+      return;
+    }
+    if (sessionUser.role !== "TUTOR") {
+      router.replace("/");
     }
   }, [loading, sessionUser, router]);
 
-  if (loading || !sessionUser) {
+  if (loading || !sessionUser || sessionUser.role !== "TUTOR") {
     return (
       <main className="flex min-h-screen items-center justify-center">
         <LoadingSpinner />
@@ -26,11 +30,8 @@ export default function BookingsCalendarPage() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center gap-6 px-4 py-10 sm:px-6">
-      <h1 className="text-2xl font-bold">Kalender Sesi</h1>
-      <div className="w-full max-w-6xl">
-        <BookingCalendar />
-      </div>
+    <main className="min-h-screen">
+      <BulkScheduleForm />
     </main>
   );
 }

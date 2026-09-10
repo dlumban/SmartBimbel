@@ -228,6 +228,11 @@ export async function cancelBooking(
   );
 }
 
+/** Tutor soft-delete: removes the session from calendars while keeping the DB row. */
+export async function deleteBooking(id: string): Promise<{ id: string; deletedAt: string }> {
+  return handle(await apiFetch(`/bookings/${id}`, { method: "DELETE" }));
+}
+
 // Direct edit of a CONFIRMED, tutor-scheduled booking - no counterparty
 // approval, only legal for sessions the tutor created themselves (enforced
 // server-side in BookingsService.editForTutor). Every field is optional
@@ -379,4 +384,38 @@ export async function scheduleSession(input: ScheduleSessionInput): Promise<Book
       body: JSON.stringify(input),
     }),
   );
+}
+
+export interface BulkScheduleSlot {
+  scheduledDate: string;
+  startTime: string;
+}
+
+export interface BulkScheduleResult {
+  succeeded: Booking[];
+  failed: { slot: BulkScheduleSlot; error: string }[];
+}
+
+export async function scheduleSessionsBulk(
+  base: Omit<ScheduleSessionInput, "scheduledDate" | "startTime">,
+  slots: BulkScheduleSlot[],
+): Promise<BulkScheduleResult> {
+  const succeeded: Booking[] = [];
+  const failed: BulkScheduleResult["failed"] = [];
+  for (const slot of slots) {
+    try {
+      const booking = await scheduleSession({
+        ...base,
+        scheduledDate: slot.scheduledDate,
+        startTime: slot.startTime,
+      });
+      succeeded.push(booking);
+    } catch (e) {
+      failed.push({
+        slot,
+        error: e instanceof Error ? e.message : "Gagal menjadwalkan sesi.",
+      });
+    }
+  }
+  return { succeeded, failed };
 }

@@ -242,6 +242,50 @@ describe("BookingsService.create (pre-transaction validation)", () => {
       expect(reminderQueue.add).toHaveBeenCalled();
       expect(payments.schedulePaymentExpiry).not.toHaveBeenCalled();
     });
+
+    it("allows a tutor to schedule a session in the past", async () => {
+      prisma.tutorProfile.findUnique.mockResolvedValue({
+        id: "tp1",
+        teachingModes: ["ONLINE"],
+        city: "Jakarta Selatan",
+        hourlyRate: 100000,
+      });
+      prisma.studentProfile.findUnique.mockResolvedValue({ id: "sp1", userId: "student-1" });
+      prisma.subject.findUnique.mockResolvedValue({ id: "s1" });
+
+      let capturedCreateData: Record<string, unknown> | undefined;
+      prisma.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
+        const tx = {
+          $executeRaw: jest.fn().mockResolvedValue(undefined),
+          booking: {
+            findMany: jest.fn().mockResolvedValue([]),
+            create: jest.fn().mockImplementation(({ data }: { data: Record<string, unknown> }) => {
+              capturedCreateData = data;
+              return Promise.resolve({ id: "booking1", scheduledAt: data.scheduledAt });
+            }),
+          },
+          bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+          conversation: { create: jest.fn().mockResolvedValue({}) },
+        };
+        return cb(tx);
+      });
+
+      await service.create(tutorUser, {
+        ...baseDto,
+        tutorId: undefined,
+        studentId: "sp1",
+        scheduledDate: "2020-08-18",
+        startTime: "10:00",
+      });
+
+      expect(capturedCreateData).toEqual(
+        expect.objectContaining({
+          studentId: "sp1",
+          tutorId: "tp1",
+          status: "CONFIRMED",
+        }),
+      );
+    });
   });
 
   describe("packageId (fixed-price bundle)", () => {
@@ -452,6 +496,7 @@ describe("BookingsService response actions (accept/decline/counter-propose)", ()
       student: { userId: "student-user-1" },
       tutor: { userId: "tutor-user-1", city: "Jakarta Selatan" },
       proposedScheduledAt: null,
+      deletedAt: null,
       ...overrides,
     };
   }
@@ -895,6 +940,56 @@ describe("BookingsService response actions (accept/decline/counter-propose)", ()
       ).rejects.toThrow(BadRequestException);
     });
 
+    it("rejects cancelling a CONFIRMED booking whose session has already ended for students", async () => {
+      tx.booking.findUnique.mockResolvedValue(
+        makeBooking({
+          status: "CONFIRMED",
+          scheduledAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+          durationMinutes: 60,
+        }),
+      );
+      await expect(
+        service.cancel(studentUser, "b1", { reasonCode: "NO_LONGER_NEEDED" }),
+      ).rejects.toThrow(BadRequestException);
+      expect(tx.booking.update).not.toHaveBeenCalled();
+    });
+
+    it("allows a tutor to cancel a CONFIRMED booking whose session has already ended", async () => {
+      const booking = makeBooking({
+        status: "CONFIRMED",
+        scheduledAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+        durationMinutes: 60,
+      });
+      tx.booking.findUnique.mockResolvedValue(booking);
+      tx.booking.update.mockResolvedValue({ ...booking, status: "CANCELLED" });
+
+      await service.cancel(tutorUser, "b1", { reasonCode: "OTHER" });
+
+      expect(tx.booking.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: "CANCELLED" }),
+        }),
+      );
+    });
+
+    it("allows a tutor to cancel a COMPLETED booking", async () => {
+      const booking = makeBooking({
+        status: "COMPLETED",
+        scheduledAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        durationMinutes: 60,
+      });
+      tx.booking.findUnique.mockResolvedValue(booking);
+      tx.booking.update.mockResolvedValue({ ...booking, status: "CANCELLED" });
+
+      await service.cancel(tutorUser, "b1", { reasonCode: "OTHER" });
+
+      expect(tx.booking.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: "CANCELLED" }),
+        }),
+      );
+    });
+
     it("rejects a non-participant trying to cancel", async () => {
       tx.booking.findUnique.mockResolvedValue(
         makeBooking({ status: "ACCEPTED", scheduledAt: new Date(Date.now() + 60 * 60 * 1000) }),
@@ -902,6 +997,28 @@ describe("BookingsService response actions (accept/decline/counter-propose)", ()
       await expect(
         service.cancel(strangerUser, "b1", { reasonCode: "OTHER" }),
       ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe("softDelete", () => {
+    it("soft-deletes a booking for the tutor", async () => {
+      const booking = makeBooking({ status: "CANCELLED" });
+      prisma.booking.findUnique.mockResolvedValue(booking);
+      const deletedAt = new Date();
+      prisma.booking.update.mockResolvedValue({ ...booking, deletedAt, deletedByUserId: tutorUser.id });
+
+      const result = await service.softDelete(tutorUser, "b1");
+
+      expect(result.deletedAt).toEqual(deletedAt);
+      expect(prisma.booking.update).toHaveBeenCalledWith({
+        where: { id: "b1" },
+        data: { deletedAt: expect.any(Date), deletedByUserId: tutorUser.id },
+      });
+    });
+
+    it("rejects soft-delete by a student", async () => {
+      prisma.booking.findUnique.mockResolvedValue(makeBooking({ status: "CANCELLED" }));
+      await expect(service.softDelete(studentUser, "b1")).rejects.toThrow(ForbiddenException);
     });
   });
 

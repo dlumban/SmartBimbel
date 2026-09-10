@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Button, ErrorState, Input, LoadingSpinner } from "@smartbimbel/ui";
 import { StudentFormModal } from "./StudentFormModal";
 import {
@@ -144,6 +145,11 @@ export function MyStudentsPage() {
                       <td className="px-3 py-2 text-muted-foreground">{s.email ?? "-"}</td>
                       <td className="px-3 py-2 text-right">
                         <div className="flex justify-end gap-2">
+                          <Link href={`/students/${s.userId}/schedule`}>
+                            <Button size="sm" variant="secondary">
+                              Jadwal
+                            </Button>
+                          </Link>
                           <Button size="sm" variant="secondary" onClick={() => setEditTarget(s)}>
                             Edit
                           </Button>

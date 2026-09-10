@@ -32,6 +32,21 @@ function dateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+function formatBookingTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString("id-ID", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatBookingChipTitle(
+  booking: AdminBookingListItem,
+): string {
+  const student = booking.student.user.name ?? "Siswa";
+  const tutor = booking.tutor.user.name ?? "Tutor";
+  return `${formatBookingTime(booking.scheduledAt)} · ${student} / ${tutor} · ${booking.subject.name}`;
+}
+
 function monthRange(year: number, month: number): { from: string; to: string } {
   const from = new Date(year, month, 1, 0, 0, 0, 0);
   const to = new Date(year, month + 1, 0, 23, 59, 59, 999);
@@ -104,8 +119,8 @@ export function BookingsCalendar() {
   const today = dateKey(new Date());
 
   return (
-    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_380px]">
-      <div className="flex flex-col gap-4">
+    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="flex w-full flex-col gap-4">
         <div className="flex items-center justify-between">
           <button
             type="button"
@@ -114,7 +129,7 @@ export function BookingsCalendar() {
           >
             &larr; Sebelumnya
           </button>
-          <h2 className="text-lg font-semibold">
+          <h2 className="text-xl font-semibold">
             {MONTH_LABELS[month]} {year}
           </h2>
           <button
@@ -129,11 +144,11 @@ export function BookingsCalendar() {
         {loading && <LoadingSpinner />}
         {error && <ErrorState description={error} onRetry={refreshMonth} />}
         {!loading && !error && (
-          <div className="grid grid-cols-7 gap-px overflow-hidden rounded-lg border border-border bg-border text-sm">
+          <div className="grid grid-cols-7 gap-px overflow-hidden rounded-lg border border-border bg-border">
             {WEEKDAY_LABELS.map((w) => (
               <div
                 key={w}
-                className="bg-muted px-2 py-1 text-center text-xs font-medium text-muted-foreground"
+                className="bg-muted px-2 py-2 text-center text-sm font-medium text-muted-foreground"
               >
                 {w}
               </div>
@@ -147,33 +162,84 @@ export function BookingsCalendar() {
               return (
                 <div
                   key={i}
-                  className={`min-h-28 p-1 ${inMonth ? "bg-card" : "bg-muted"} ${
+                  className={`min-h-36 p-1.5 sm:min-h-40 sm:p-2 ${inMonth ? "bg-card" : "bg-muted"} ${
                     key === today ? "ring-2 ring-inset ring-primary" : ""
                   }`}
                 >
                   {inMonth && (
                     <>
-                      <span className="text-xs text-muted-foreground">{dayNum}</span>
-                      <div className="mt-1 flex flex-col gap-0.5">
-                        {items.map((b) => (
-                          <button
-                            key={b.id}
-                            type="button"
-                            title={`${b.subject.name} · ${b.student.user.name ?? "Siswa"} / ${b.tutor.user.name ?? "Tutor"} · ${ADMIN_BOOKING_STATUS_LABELS[b.status] ?? b.status}`}
-                            onClick={() => loadDetail(b.id)}
-                            className={`block truncate rounded px-1 py-0.5 text-left text-xs ${
-                              selectedId === b.id
-                                ? "bg-primary text-primary-foreground"
-                                : "bg-primary/10 text-primary hover:bg-primary/20"
-                            }`}
-                          >
-                            {new Date(b.scheduledAt).toLocaleTimeString("id-ID", {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}{" "}
-                            {b.subject.name}
-                          </button>
-                        ))}
+                      <span className="text-sm font-medium text-muted-foreground">{dayNum}</span>
+                      <div className="mt-1.5 flex flex-col gap-1.5">
+                        {items.map((b) => {
+                          const studentName = b.student.user.name ?? "Siswa";
+                          const tutorName = b.tutor.user.name ?? "Tutor";
+                          const selected = selectedId === b.id;
+                          const cancelled = b.status === "CANCELLED";
+                          return (
+                            <button
+                              key={b.id}
+                              type="button"
+                              title={`${formatBookingChipTitle(b)} · ${ADMIN_BOOKING_STATUS_LABELS[b.status] ?? b.status}`}
+                              onClick={() => loadDetail(b.id)}
+                              className={`block w-full overflow-hidden rounded-md border px-2 py-1.5 text-left ${
+                                selected
+                                  ? cancelled
+                                    ? "border-destructive bg-destructive text-destructive-foreground"
+                                    : "border-primary bg-primary text-primary-foreground"
+                                  : cancelled
+                                    ? "border-destructive/30 bg-destructive/10 hover:bg-destructive/20"
+                                    : "border-primary/20 bg-primary/10 hover:bg-primary/20"
+                              }`}
+                            >
+                              <span
+                                className={`block text-xs font-semibold leading-tight ${
+                                  selected
+                                    ? cancelled
+                                      ? "text-destructive-foreground"
+                                      : "text-primary-foreground"
+                                    : cancelled
+                                      ? "text-destructive"
+                                      : "text-primary"
+                                }`}
+                              >
+                                {formatBookingTime(b.scheduledAt)}
+                              </span>
+                              <span
+                                className={`mt-0.5 block truncate text-xs font-medium leading-tight ${
+                                  selected
+                                    ? cancelled
+                                      ? "text-destructive-foreground"
+                                      : "text-primary-foreground"
+                                    : "text-foreground"
+                                }`}
+                              >
+                                {studentName}
+                              </span>
+                              <span
+                                className={`mt-0.5 block truncate text-[11px] leading-tight ${
+                                  selected
+                                    ? cancelled
+                                      ? "text-destructive-foreground/80"
+                                      : "text-primary-foreground/80"
+                                    : "text-muted-foreground"
+                                }`}
+                              >
+                                {b.subject.name}
+                              </span>
+                              <span
+                                className={`mt-0.5 block truncate text-[11px] leading-tight ${
+                                  selected
+                                    ? cancelled
+                                      ? "text-destructive-foreground/70"
+                                      : "text-primary-foreground/70"
+                                    : "text-muted-foreground"
+                                }`}
+                              >
+                                {tutorName}
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </>
                   )}

@@ -119,7 +119,7 @@ export function PackagesManagement() {
       {showForm && (
         <Card>
           <CardContent className="pt-6">
-            <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+            <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-3">
               <Input
                 label="Nama paket"
                 value={form.name}

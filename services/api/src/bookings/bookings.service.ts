@@ -216,7 +216,7 @@ export class BookingsService {
 
       const tz = getTimezoneForCity(tutorProfile.city);
       const scheduledAt = combineLocalDateTimeToUtc(dto.scheduledDate, dto.startTime, tz);
-      if (scheduledAt.getTime() <= Date.now()) {
+      if (user.role !== "TUTOR" && scheduledAt.getTime() <= Date.now()) {
         throw new BadRequestException("Cannot book a time in the past.");
       }
       const endAt = new Date(scheduledAt.getTime() + dto.durationMinutes * 60 * 1000);
@@ -500,6 +500,19 @@ export class BookingsService {
         throw new BadRequestException(`Cannot cancel a booking in ${booking.status} state.`);
       }
 
+      const sessionEnd =
+        booking.scheduledAt.getTime() + booking.durationMinutes * 60 * 1000;
+      // Students cannot cancel a session that has already ended; tutors can
+      // (including COMPLETED → CANCELLED) so past mistakes stay correctable
+      // and show as cancelled (red) on calendars.
+      if (actor !== "TUTOR" && sessionEnd <= Date.now()) {
+        throw new BadRequestException("Cannot cancel a session that has already ended.");
+      }
+
+      if (booking.deletedAt) {
+        throw new BadRequestException("Cannot cancel a deleted session.");
+      }
+
       // Only a booking that had actually been committed to (ACCEPTED, a
       // reschedule pending on top of that, or already-paid CONFIRMED) can
       // incur a late-cancellation flag - withdrawing a still-pending
@@ -547,6 +560,32 @@ export class BookingsService {
 
       return result;
     });
+  }
+
+  // Tutor-only soft-delete: hides the session from calendars and lists.
+  // The row stays for history/payments/disputes. Distinct from cancel,
+  // which keeps the session visible (styled red) on calendars.
+  async softDelete(tutor: User, id: string): Promise<{ id: string; deletedAt: Date }> {
+    const booking = await this.prisma.booking.findUnique({ where: { id }, include: BOOKING_INCLUDE });
+    if (!booking) {
+      throw new NotFoundException("No booking with that id exists.");
+    }
+    if (this.actorRoleFor(tutor, booking) !== "TUTOR") {
+      throw new ForbiddenException("Only the tutor can delete this session.");
+    }
+    if (booking.deletedAt) {
+      throw new BadRequestException("This session is already deleted.");
+    }
+
+    const result = await this.prisma.booking.update({
+      where: { id },
+      data: {
+        deletedAt: new Date(),
+        deletedByUserId: tutor.id,
+      },
+    });
+
+    return { id: result.id, deletedAt: result.deletedAt! };
   }
 
   // Direct edit, no counterparty approval - only for a CONFIRMED booking the
@@ -1038,7 +1077,7 @@ export class BookingsService {
       where: { id },
       include: BOOKING_INCLUDE,
     });
-    if (!booking) {
+    if (!booking || booking.deletedAt) {
       throw new NotFoundException("No booking with that id exists.");
     }
     this.actorRoleFor(user, booking);
@@ -1068,9 +1107,9 @@ export class BookingsService {
     }
 
     const bucketWhere = this.bucketWhere(query.bucket);
-    const where: Prisma.BookingWhereInput = bucketWhere
-      ? { AND: [scopeWhere, bucketWhere] }
-      : scopeWhere;
+    const where: Prisma.BookingWhereInput = {
+      AND: [scopeWhere, { deletedAt: null }, ...(bucketWhere ? [bucketWhere] : [])],
+    };
 
     // Past/cancelled read most-recent-first; upcoming reads soonest-first -
     // whichever ordering is most useful to scan for that tab.

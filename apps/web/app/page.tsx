@@ -44,11 +44,11 @@ export default function HomePage() {
     <main className="flex min-h-screen flex-col items-center gap-6 px-6 pb-10 pt-2 text-center">
       <h1 className="text-2xl font-bold">Selamat datang kembali</h1>
       {sessionUser.role === "TUTOR" && (
-        <Card className="w-full max-w-2xl">
+        <Card className="w-full max-w-6xl">
           <CardContent className="flex flex-col items-center gap-4 pt-6">
             <TutorVerificationStatus />
-            <div className="flex w-full flex-col items-center gap-3">
-              <BookingCalendar includeCancelled={false} />
+            <div className="flex w-full flex-col items-stretch gap-3">
+              <BookingCalendar includeCancelled />
             </div>
           </CardContent>
         </Card>

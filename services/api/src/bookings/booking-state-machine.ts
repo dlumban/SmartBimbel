@@ -57,6 +57,10 @@ const TRANSITIONS: Transition[] = [
       { from, action: "cancel", actor: "STUDENT", to: "CANCELLED" },
     ],
   ),
+
+  // Tutors may cancel a completed past session so it shows as cancelled
+  // (red) on calendars; students cannot reverse a completed session.
+  { from: "COMPLETED", action: "cancel", actor: "TUTOR", to: "CANCELLED" },
 ];
 
 export function resolveBookingTransition(

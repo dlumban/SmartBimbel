@@ -43,6 +43,12 @@ Full product context lives in [docs/PRD.md](docs/PRD.md). Delivery plan and task
 - Receive ratings/reviews from students
 - Raise or respond to disputes
 - Add a student directly (an offline referral/walk-in, no sign-up required), edit that student's details, and generate an access link so they can sign in without registering — private to the tutor who added them; the link stays valid until the tutor deactivates it
+- Directly schedule a session with a student (auto-confirmed, no negotiation needed), optionally picking an admin-defined tutoring package to set its price and duration instead of the normal hourly rate
+- Edit the time, duration, subject, mode, or notes of a future session they scheduled themselves, or cancel it — without needing the student's approval
+
+### For admins
+
+- Manage tutoring packages: create fixed-price bundles (name, session count, duration, total price) that tutors can pick when scheduling a session, and activate/deactivate them as needed
 
 Feature scope and delivery order are tracked sprint-by-sprint in [docs/sprints](docs/sprints/README.md); full product rationale is in [docs/PRD.md](docs/PRD.md).
 

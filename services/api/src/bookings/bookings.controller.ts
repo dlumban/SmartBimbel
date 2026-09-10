@@ -123,6 +123,13 @@ export class BookingsController {
     return this.bookingsService.cancel(user, id, dto);
   }
 
+  // Tutor soft-delete: removes the session from calendars (keeps the DB row).
+  @Delete(":id")
+  @Roles("TUTOR")
+  softDelete(@CurrentUser() tutor: User, @Param("id") id: string) {
+    return this.bookingsService.softDelete(tutor, id);
+  }
+
   @Patch(":id/no-show")
   reportNoShow(@CurrentUser() user: User, @Param("id") id: string) {
     return this.bookingsService.reportNoShow(user, id);

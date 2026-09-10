@@ -24,6 +24,11 @@ vi.mock("../lib/bookings", () => ({
   scheduleSession: (...args: unknown[]) => scheduleSession(...args),
 }));
 
+const listActivePackages = vi.fn();
+vi.mock("../lib/packages", () => ({
+  listActivePackages: () => listActivePackages(),
+}));
+
 vi.mock("./BookingDetail", () => ({
   BookingDetail: ({ bookingId }: { bookingId: string }) => <div>BookingDetail:{bookingId}</div>,
 }));
@@ -79,6 +84,18 @@ function makeBooking(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makePackage(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "pkg1",
+    name: "Paket Hemat",
+    sessionCount: 4,
+    durationMinutes: 60,
+    totalPrice: 400000,
+    isActive: true,
+    ...overrides,
+  };
+}
+
 function makeStudent(overrides: Record<string, unknown> = {}) {
   return {
     studentProfileId: "sp1",
@@ -108,6 +125,7 @@ describe("ScheduleSessionForm", () => {
     getMyTutorProfile.mockResolvedValue(makeTutorProfile());
     listAllBookings.mockResolvedValue([]);
     listStudents.mockResolvedValue({ data: [makeStudent()], total: 1, page: 1, limit: 10 });
+    listActivePackages.mockResolvedValue([]);
   });
 
   it("shows an error state when the tutor's own profile fails to load", async () => {
@@ -172,6 +190,35 @@ describe("ScheduleSessionForm", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/bookings/b1"));
   });
 
+  it("does not show a package selector when there are no active packages", async () => {
+    render(<ScheduleSessionForm />);
+    await goToNextWeekAndSelectFirstSlot();
+    await selectStudentFromTable();
+
+    expect(screen.queryByText("Paket (opsional)")).not.toBeInTheDocument();
+  });
+
+  it("lets a package override the session duration and includes packageId in the submitted payload", async () => {
+    listActivePackages.mockResolvedValue([makePackage()]);
+    scheduleSession.mockResolvedValue({ id: "b1" });
+    render(<ScheduleSessionForm />);
+    await goToNextWeekAndSelectFirstSlot();
+    await selectStudentFromTable();
+
+    fireEvent.change(screen.getByLabelText("Paket (opsional)"), { target: { value: "pkg1" } });
+    expect(
+      screen.getByText(/Durasi sesi ditetapkan 60 menit oleh paket ini/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Jadwalkan Sesi" }));
+
+    await waitFor(() =>
+      expect(scheduleSession).toHaveBeenCalledWith(
+        expect.objectContaining({ packageId: "pkg1", durationMinutes: 60 }),
+      ),
+    );
+  });
+
   it("shows a submit error without navigating away on failure", async () => {
     scheduleSession.mockRejectedValue(new Error("This time is no longer available."));
     render(<ScheduleSessionForm />);
@@ -194,10 +241,27 @@ describe("ScheduleSessionForm", () => {
     await screen.findByText("Jadwalkan Sesi");
     fireEvent.click(screen.getByRole("button", { name: /Minggu Berikutnya/ }));
 
-    fireEvent.click(await screen.findByTitle("09:00-09:30"));
+    fireEvent.click(await screen.findByTitle("09:00-09:30 · Andi Nugraha · Matematika"));
 
     expect(await screen.findByText("BookingDetail:existing1")).toBeInTheDocument();
     // Selecting an existing session clears any in-progress new-session selection.
     expect(screen.queryByText("Pilih siswa")).not.toBeInTheDocument();
+  });
+
+  it("shows completed sessions on the calendar, not just active ones", async () => {
+    const today = new Date();
+    today.setHours(16, 0, 0, 0);
+    listAllBookings.mockResolvedValue([
+      makeBooking({
+        status: "COMPLETED",
+        scheduledAt: today.toISOString(),
+        durationMinutes: 60,
+      }),
+    ]);
+
+    render(<ScheduleSessionForm />);
+
+    expect(await screen.findByText("Andi Nugraha")).toBeInTheDocument();
+    expect(screen.getByText("Matematika")).toBeInTheDocument();
   });
 });

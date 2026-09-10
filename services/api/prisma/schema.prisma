@@ -160,6 +160,7 @@ model User {
   studentProfile              StudentProfile?
   messages                    Message[]
   cancelledBookings           Booking[]              @relation("BookingCancelledBy")
+  deletedBookings             Booking[]              @relation("BookingDeletedBy")
   requestedBookings           Booking[]              @relation("BookingRequestedBy")
   rescheduleProposals         Booking[]              @relation("BookingRescheduleProposedBy")
   noShowReports               Booking[]              @relation("BookingNoShowReportedBy")
@@ -361,6 +362,12 @@ model Booking {
   cancellationReason         String?
   cancelledByUserId          String?
   cancelledByUser            User?                   @relation("BookingCancelledBy", fields: [cancelledByUserId], references: [id], onDelete: SetNull)
+  // Soft-delete by the tutor: hides the session from calendars/lists while
+  // keeping the row for history, payments, and disputes. Distinct from
+  // CANCELLED, which remains visible (styled as cancelled) on calendars.
+  deletedAt                  DateTime?
+  deletedByUserId            String?
+  deletedByUser              User?                   @relation("BookingDeletedBy", fields: [deletedByUserId], references: [id], onDelete: SetNull)
   // Whether this cancellation fell inside the free-cancellation window
   // (Task 3.5) - snapshotted at cancel time rather than derived later,
   // since scheduledAt itself isn't a stable reference point (a booking can
@@ -404,6 +411,7 @@ model Booking {
   @@index([studentId])
   @@index([tutorId])
   @@index([status])
+  @@index([deletedAt])
 }
 
 // Admin-managed fixed-price bundle a tutor can pick when scheduling a

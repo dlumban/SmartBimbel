@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, ErrorState, LoadingSpinner } from "@smartbimbel/ui";
 import { ACTIVE_BOOKING_STATUSES, AllowedBookingDurationMinutes } from "@smartbimbel/shared";
@@ -13,11 +14,15 @@ import { StudentPickerTable } from "./StudentPickerTable";
 import { BusyBlock, SchedulingCalendar, SlotSelection } from "./SchedulingCalendar";
 import { BookingDetail } from "./BookingDetail";
 
-const ACTIVE_STATUSES = new Set<Booking["status"]>(ACTIVE_BOOKING_STATUSES);
+const SCHEDULE_CALENDAR_STATUSES = new Set<Booking["status"]>([
+  ...ACTIVE_BOOKING_STATUSES,
+  "COMPLETED",
+  "CANCELLED",
+]);
 
 interface ScheduleBusyBlock extends BusyBlock {
   bookingId: string;
-  label: string;
+  completed?: boolean;
 }
 
 function toBusyBlock(b: Booking): ScheduleBusyBlock {
@@ -25,7 +30,10 @@ function toBusyBlock(b: Booking): ScheduleBusyBlock {
     scheduledAt: b.scheduledAt,
     durationMinutes: b.durationMinutes,
     bookingId: b.id,
-    label: `${b.student.user.name ?? "Siswa"} – ${b.subject.name}`,
+    studentName: b.student.user.name ?? "Siswa",
+    subjectName: b.subject.name,
+    completed: b.status === "COMPLETED",
+    cancelled: b.status === "CANCELLED",
   };
 }
 
@@ -62,7 +70,7 @@ export function ScheduleSessionForm() {
   }, [refreshBookings]);
 
   const busy = useMemo(
-    () => bookings.filter((b) => ACTIVE_STATUSES.has(b.status)).map(toBusyBlock),
+    () => bookings.filter((b) => SCHEDULE_CALENDAR_STATUSES.has(b.status)).map(toBusyBlock),
     [bookings],
   );
 
@@ -118,20 +126,24 @@ export function ScheduleSessionForm() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-10">
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-6 py-10">
       <h1 className="text-2xl font-bold">Jadwalkan Sesi</h1>
 
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-semibold">Kalender</h2>
         <p className="text-xs text-muted-foreground">
           Klik setengah jam yang kosong untuk membuat sesi baru, atau klik sesi yang sudah ada untuk
-          melihat/mengubahnya.
+          melihat/mengubahnya.{" "}
+          <Link href="/bookings/schedule/bulk" className="text-primary hover:underline">
+            Jadwalkan massal
+          </Link>
         </p>
         <SchedulingCalendar
           busy={busy}
           selected={selection}
           onSelect={handleSelect}
           onBusyBlockClick={handleBusyBlockClick}
+          allowPastSlots
         />
       </section>
 

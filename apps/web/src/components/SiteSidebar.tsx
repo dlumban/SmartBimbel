@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { CalendarDays, CalendarPlus, ExternalLink, Home, LogOut, UserCircle2, Users } from "lucide-react";
+import { CalendarDays, CalendarPlus, CalendarRange, ExternalLink, Home, LogOut, UserCircle2, Users } from "lucide-react";
 import { Button } from "@smartbimbel/ui";
 import { useAuth } from "../hooks/useAuth";
 import type { SessionUser } from "../lib/api";
@@ -23,6 +23,7 @@ const TUTOR_ITEMS: MenuItem[] = [
   { href: "/onboarding/profile", label: "Profil Tutor", icon: UserCircle2 },
   { href: "/students", label: "Murid Saya", icon: Users },
   { href: "/bookings/schedule", label: "Jadwalkan Sesi", icon: CalendarPlus },
+  { href: "/bookings/schedule/bulk", label: "Jadwalkan Massal", icon: CalendarRange },
 ];
 
 // apps/web is student/tutor-facing only (PRD - admins use the separate

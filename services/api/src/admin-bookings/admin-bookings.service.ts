@@ -32,6 +32,7 @@ export class AdminBookingsService {
     const limit = query.limit ?? 20;
 
     const where: Prisma.BookingWhereInput = {
+      deletedAt: null,
       ...(query.status ? { status: query.status } : {}),
       ...(query.city ? { tutor: { city: { equals: query.city, mode: "insensitive" } } } : {}),
       ...(query.subjectId ? { subjectId: query.subjectId } : {}),

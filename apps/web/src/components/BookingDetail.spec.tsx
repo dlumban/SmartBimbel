@@ -11,8 +11,14 @@ const proposeReschedule = vi.fn();
 const acceptReschedule = vi.fn();
 const declineReschedule = vi.fn();
 const cancelBooking = vi.fn();
+const deleteBooking = vi.fn();
 const editBooking = vi.fn();
 const getMyTutorProfile = vi.fn();
+const push = vi.fn();
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push, replace: vi.fn() }),
+}));
 
 vi.mock("../lib/bookings", async () => {
   const actual = await vi.importActual<typeof import("../lib/bookings")>("../lib/bookings");
@@ -27,6 +33,7 @@ vi.mock("../lib/bookings", async () => {
     acceptReschedule: (...args: unknown[]) => acceptReschedule(...args),
     declineReschedule: (...args: unknown[]) => declineReschedule(...args),
     cancelBooking: (...args: unknown[]) => cancelBooking(...args),
+    deleteBooking: (...args: unknown[]) => deleteBooking(...args),
     editBooking: (...args: unknown[]) => editBooking(...args),
   };
 });
@@ -175,6 +182,35 @@ describe("BookingDetail", () => {
 
     expect(await screen.findByRole("button", { name: "Batalkan" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Ajukan Jadwal Ulang" })).not.toBeInTheDocument();
+  });
+
+  it("hides the cancel action for a CONFIRMED booking whose session has ended", async () => {
+    sessionUser = { id: "student-1", role: "STUDENT" };
+    getBooking.mockResolvedValue(
+      makeBooking({
+        status: "CONFIRMED",
+        scheduledAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        durationMinutes: 60,
+      }),
+    );
+    render(<BookingDetail bookingId="b1" />);
+
+    expect(await screen.findByText("Terkonfirmasi")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Batalkan" })).not.toBeInTheDocument();
+  });
+
+  it("shows cancel and delete for a tutor when the session has already ended", async () => {
+    getBooking.mockResolvedValue(
+      makeBooking({
+        status: "CONFIRMED",
+        scheduledAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        durationMinutes: 60,
+      }),
+    );
+    render(<BookingDetail bookingId="b1" />);
+
+    expect(await screen.findByRole("button", { name: "Batalkan" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hapus" })).toBeInTheDocument();
   });
 
   it("shows the edit action for a tutor-initiated, upcoming CONFIRMED booking and lets the tutor edit it", async () => {

@@ -17,12 +17,14 @@ import {
   counterProposeBooking,
   declineBooking,
   declineReschedule,
+  deleteBooking,
   editBooking,
   getBooking,
   getBookingHistory,
   proposeReschedule,
 } from "../lib/bookings";
 import { getMyTutorProfile } from "../lib/tutors";
+import { useRouter } from "next/navigation";
 import { JoinMeetingSection } from "./JoinMeetingSection";
 import { SessionCompletionSection } from "./SessionCompletionSection";
 import { SessionNotesSection } from "./SessionNotesSection";
@@ -34,6 +36,11 @@ const CANCELLABLE_STATUSES: Booking["status"][] = [
   "ACCEPTED",
   "RESCHEDULE_PROPOSED",
   "CONFIRMED",
+];
+
+const TUTOR_CANCELLABLE_STATUSES: Booking["status"][] = [
+  ...CANCELLABLE_STATUSES,
+  "COMPLETED",
 ];
 
 const CANCELLATION_REASON_CODES = Object.keys(
@@ -54,7 +61,7 @@ function toTimeInputValue(iso: string) {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-type Panel = "decline" | "counter" | "reschedule" | "cancel" | "edit" | null;
+type Panel = "decline" | "counter" | "reschedule" | "cancel" | "edit" | "delete" | null;
 
 export function BookingDetail({
   bookingId,
@@ -63,6 +70,7 @@ export function BookingDetail({
   bookingId: string;
   onUpdated?: (booking: Booking) => void;
 }) {
+  const router = useRouter();
   const { sessionUser } = useAuth();
   const [booking, setBooking] = useState<Booking | null>(null);
   const [history, setHistory] = useState<BookingHistoryEntry[]>([]);
@@ -149,9 +157,14 @@ export function BookingDetail({
   const isReschedulePending = booking.status === "RESCHEDULE_PROPOSED";
   const isReschedulingParty = isReschedulePending && booking.rescheduleProposedByUserId === sessionUser?.id;
   const canRespondToReschedule = isReschedulePending && isParticipant && !isReschedulingParty;
-  const canCancel = isParticipant && CANCELLABLE_STATUSES.includes(booking.status);
   const sessionEnded =
     new Date(booking.scheduledAt).getTime() + booking.durationMinutes * 60 * 1000 <= Date.now();
+  // Students cannot cancel after the session ends; tutors can cancel past
+  // and COMPLETED sessions so they appear in red on calendars.
+  const canCancel = isTutor
+    ? TUTOR_CANCELLABLE_STATUSES.includes(booking.status)
+    : isParticipant && CANCELLABLE_STATUSES.includes(booking.status) && !sessionEnded;
+  const canDelete = isTutor;
   // A tutor-initiated booking (requestedByUserId is the tutor's own
   // userId) is CONFIRMED with no wait at all - see BookingsService.create
   // - so the tutor can write the report as soon as it's scheduled, not
@@ -178,7 +191,8 @@ export function BookingDetail({
     booking.status === "RESCHEDULE_PROPOSED" ||
     booking.status === "CONFIRMED";
   const hoursUntilSession = (new Date(booking.scheduledAt).getTime() - Date.now()) / (60 * 60 * 1000);
-  const cancelWouldBeLate = wasCommitted && hoursUntilSession < FREE_CANCELLATION_WINDOW_HOURS;
+  const cancelWouldBeLate =
+    !sessionEnded && wasCommitted && hoursUntilSession < FREE_CANCELLATION_WINDOW_HOURS;
 
   return (
     <div className="flex w-full max-w-lg flex-col gap-4">
@@ -277,7 +291,7 @@ export function BookingDetail({
         </div>
       )}
 
-      {(canProposeReschedule || canCancel || canEdit) && noPanelOpen && (
+      {(canProposeReschedule || canCancel || canEdit || canDelete) && noPanelOpen && (
         <div className="flex flex-wrap gap-2">
           {canEdit && (
             <Button variant="ghost" disabled={submitting} onClick={openEditPanel}>
@@ -292,6 +306,11 @@ export function BookingDetail({
           {canCancel && (
             <Button variant="danger" disabled={submitting} onClick={() => setPanel("cancel")}>
               Batalkan
+            </Button>
+          )}
+          {canDelete && (
+            <Button variant="ghost" disabled={submitting} onClick={() => setPanel("delete")}>
+              Hapus
             </Button>
           )}
         </div>
@@ -517,7 +536,11 @@ export function BookingDetail({
       {panel === "cancel" && (
         <Card>
           <CardContent className="flex flex-col gap-2 pt-6">
-            {cancelWouldBeLate ? (
+            {sessionEnded ? (
+              <p className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                Sesi ini sudah lewat. Membatalkan akan menampilkannya berwarna merah di kalender.
+              </p>
+            ) : cancelWouldBeLate ? (
               <p className="rounded-md bg-warning-50 p-3 text-sm text-warning-700">
                 Sesi kurang dari {FREE_CANCELLATION_WINDOW_HOURS} jam lagi - pembatalan ini akan
                 tercatat sebagai pembatalan terlambat.
@@ -562,6 +585,41 @@ export function BookingDetail({
                 }
               >
                 Konfirmasi Batalkan
+              </Button>
+              <Button variant="ghost" disabled={submitting} onClick={() => setPanel(null)}>
+                Batal
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {panel === "delete" && (
+        <Card>
+          <CardContent className="flex flex-col gap-2 pt-6">
+            <p className="text-sm text-muted-foreground">
+              Hapus sesi ini dari kalender? Sesi tidak akan tampil lagi. Riwayat dan data pembayaran
+              tetap tersimpan.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="danger"
+                disabled={submitting}
+                onClick={() => {
+                  setSubmitting(true);
+                  setActionError(null);
+                  deleteBooking(bookingId)
+                    .then(() => {
+                      onUpdated?.(booking);
+                      router.push("/");
+                    })
+                    .catch((e: unknown) => {
+                      setActionError(e instanceof Error ? e.message : "Gagal menghapus sesi.");
+                      setSubmitting(false);
+                    });
+                }}
+              >
+                Konfirmasi Hapus
               </Button>
               <Button variant="ghost" disabled={submitting} onClick={() => setPanel(null)}>
                 Batal

@@ -53,6 +53,30 @@ describe("SchedulingCalendar", () => {
     });
   });
 
+  it("blocks past open cells by default", () => {
+    vi.setSystemTime(new Date(2026, 7, 10, 10, 0, 0));
+    const onSelect = vi.fn();
+    render(<SchedulingCalendar busy={[]} selected={null} onSelect={onSelect} />);
+
+    fireEvent.click(screen.getAllByTitle("08:00")[DAY_INDEX]);
+
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("allows past open cells when allowPastSlots is true", () => {
+    vi.setSystemTime(new Date(2026, 7, 10, 10, 0, 0));
+    const onSelect = vi.fn();
+    render(<SchedulingCalendar busy={[]} selected={null} onSelect={onSelect} allowPastSlots />);
+
+    fireEvent.click(screen.getAllByTitle("08:00")[DAY_INDEX]);
+
+    expect(onSelect).toHaveBeenCalledWith({
+      date: dateKeyOf(TODAY),
+      startTime: "08:00",
+      slotCount: 1,
+    });
+  });
+
   it("extends the selection when an adjacent open cell is clicked, in either direction", () => {
     render(<Harness />);
 
@@ -123,6 +147,21 @@ describe("SchedulingCalendar", () => {
     expect(onBusyBlockClick).toHaveBeenCalledWith(block);
   });
 
+  it("renders student name and subject on busy blocks when provided", () => {
+    const block: EditableBusyBlock = {
+      id: "b1",
+      scheduledAt: new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate(), 9, 0).toISOString(),
+      durationMinutes: 60,
+      studentName: "Andi Nugraha",
+      subjectName: "Matematika",
+    };
+    render(<Harness busy={[block]} />);
+
+    expect(screen.getByText("Andi Nugraha")).toBeInTheDocument();
+    expect(screen.getByText("Matematika")).toBeInTheDocument();
+    expect(screen.getByTitle("09:00-10:00 · Andi Nugraha · Matematika")).toBeInTheDocument();
+  });
+
   it("renders the busy block as inert when onBusyBlockClick is not supplied", () => {
     const block: EditableBusyBlock = {
       id: "b1",
@@ -132,5 +171,54 @@ describe("SchedulingCalendar", () => {
     render(<SchedulingCalendar busy={[block]} selected={null} onSelect={vi.fn()} />);
 
     expect(screen.getByTitle("09:00-09:30")).toBeDisabled();
+  });
+
+  it("toggles multiple slots when multiSelect is enabled", () => {
+    const onToggle = vi.fn();
+    const onClear = vi.fn();
+    render(
+      <SchedulingCalendar
+        busy={[]}
+        selected={null}
+        onSelect={vi.fn()}
+        allowPastSlots
+        multiSelect={{ slots: [], slotCount: 2, onToggle, onClear }}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByTitle("08:00")[DAY_INDEX]);
+    expect(onToggle).toHaveBeenCalledWith({
+      date: dateKeyOf(TODAY),
+      startTime: "08:00",
+      slotCount: 2,
+    });
+
+    fireEvent.click(screen.getAllByTitle("10:00")[DAY_INDEX]);
+    expect(onToggle).toHaveBeenCalledWith({
+      date: dateKeyOf(TODAY),
+      startTime: "10:00",
+      slotCount: 2,
+    });
+  });
+
+  it("shows a multi-select summary banner and clears all slots", () => {
+    const onClear = vi.fn();
+    render(
+      <SchedulingCalendar
+        busy={[]}
+        selected={null}
+        onSelect={vi.fn()}
+        multiSelect={{
+          slots: [{ date: dateKeyOf(TODAY), startTime: "08:00", slotCount: 2 }],
+          slotCount: 2,
+          onToggle: vi.fn(),
+          onClear,
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/1 slot dipilih/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hapus semua" }));
+    expect(onClear).toHaveBeenCalledOnce();
   });
 });
