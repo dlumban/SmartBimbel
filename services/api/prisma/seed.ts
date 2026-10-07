@@ -15,6 +15,7 @@ const SUBJECTS = [
   "Sosiologi",
   "PPKn",
   "Bahasa Mandarin",
+  "IPA",
   "UTBK/SNBT - Penalaran Matematika",
   "UTBK/SNBT - Literasi Bahasa Indonesia",
   "UTBK/SNBT - Literasi Bahasa Inggris",

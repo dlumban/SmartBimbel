@@ -6,6 +6,7 @@ import { ChatModule } from "../chat/chat.module";
 import { PaymentsModule } from "../payments/payments.module";
 import { BookingsController } from "./bookings.controller";
 import { BookingsService } from "./bookings.service";
+import { DailyService } from "./daily.service";
 import { BookingExpiryProcessor } from "./processors/booking-expiry.processor";
 import { SessionReminderProcessor } from "./processors/session-reminder.processor";
 import { SessionAutoCompleteProcessor } from "./processors/session-auto-complete.processor";
@@ -15,6 +16,7 @@ import { SessionAutoCompleteProcessor } from "./processors/session-auto-complete
   controllers: [BookingsController],
   providers: [
     BookingsService,
+    DailyService,
     BookingExpiryProcessor,
     SessionReminderProcessor,
     SessionAutoCompleteProcessor,

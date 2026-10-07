@@ -66,6 +66,7 @@ describe("BookingsService.create (pre-transaction validation)", () => {
       chat as unknown as ChatService,
       payments as unknown as PaymentsService,
       storage as unknown as StorageService,
+      { isConfigured: () => false, createRoom: jest.fn(), createMeetingToken: jest.fn() } as never,
       queue as unknown as Queue,
       reminderQueue as unknown as Queue,
     );
@@ -528,6 +529,7 @@ describe("BookingsService response actions (accept/decline/counter-propose)", ()
       chat as unknown as ChatService,
       payments as unknown as PaymentsService,
       storage as unknown as StorageService,
+      { isConfigured: () => false, createRoom: jest.fn(), createMeetingToken: jest.fn() } as never,
       queue as unknown as Queue,
       reminderQueue as unknown as Queue,
     );
@@ -1583,6 +1585,7 @@ describe("BookingsService.editForTutor", () => {
       chat as unknown as ChatService,
       payments as unknown as PaymentsService,
       storage as unknown as StorageService,
+      { isConfigured: () => false, createRoom: jest.fn(), createMeetingToken: jest.fn() } as never,
       queue as unknown as Queue,
       reminderQueue as unknown as Queue,
     );

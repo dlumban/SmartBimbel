@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   UploadedFile,
@@ -21,6 +22,7 @@ import { Roles } from "../auth/decorators/roles.decorator";
 import { CurrentUser } from "../auth/decorators/current-user.decorator";
 import { BookingsService } from "./bookings.service";
 import { CreateBookingDto } from "./dto/create-booking.dto";
+import { CreateGroupBookingDto } from "./dto/create-group-booking.dto";
 import { DeclineBookingDto } from "./dto/decline-booking.dto";
 import { CounterProposeBookingDto } from "./dto/counter-propose-booking.dto";
 import { ProposeRescheduleDto } from "./dto/propose-reschedule.dto";
@@ -42,6 +44,13 @@ export class BookingsController {
   @Roles("STUDENT", "TUTOR")
   create(@CurrentUser() user: User, @Body() dto: CreateBookingDto) {
     return this.bookingsService.create(user, dto);
+  }
+
+  // Declared before :id routes so "group" is not captured as an id.
+  @Post("group")
+  @Roles("TUTOR")
+  createGroup(@CurrentUser() user: User, @Body() dto: CreateGroupBookingDto) {
+    return this.bookingsService.createGroup(user, dto);
   }
 
   @Get()
@@ -138,6 +147,28 @@ export class BookingsController {
   @Patch(":id/meeting")
   setMeeting(@CurrentUser() user: User, @Param("id") id: string, @Body() dto: SetMeetingDto) {
     return this.bookingsService.setMeetingInfo(user, id, dto);
+  }
+
+  @Get(":id/session-token")
+  @Roles("STUDENT", "TUTOR")
+  sessionToken(@CurrentUser() user: User, @Param("id") id: string) {
+    return this.bookingsService.getSessionToken(user, id);
+  }
+
+  @Get(":id/whiteboard")
+  @Roles("STUDENT", "TUTOR")
+  getWhiteboard(@CurrentUser() user: User, @Param("id") id: string) {
+    return this.bookingsService.getWhiteboard(user, id);
+  }
+
+  @Put(":id/whiteboard")
+  @Roles("STUDENT", "TUTOR")
+  putWhiteboard(
+    @CurrentUser() user: User,
+    @Param("id") id: string,
+    @Body() body: { snapshot: unknown },
+  ) {
+    return this.bookingsService.putWhiteboard(user, id, body.snapshot);
   }
 
   @Patch(":id/complete")

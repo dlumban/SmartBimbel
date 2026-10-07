@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ALLOWED_BOOKING_DURATIONS_MINUTES } from "@smartbimbel/shared";
 
 const WEEKDAY_LABELS = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
@@ -30,6 +30,8 @@ export interface BusyBlock {
   durationMinutes: number;
   studentName?: string;
   subjectName?: string;
+  /** Pre-session booking notes (`booking.notes`), shown as "Catatan: …". */
+  notes?: string | null;
   completed?: boolean;
   cancelled?: boolean;
 }
@@ -116,7 +118,9 @@ export interface MultiSlotSelection {
 function formatBusyBlockTitle(block: BusyBlock, startMinutes: number, endMinutes: number): string {
   const time = `${minutesToTime(startMinutes)}-${minutesToTime(endMinutes)}`;
   const label = formatBusyBlockLabel(block);
-  return label ? `${time} · ${label}` : time;
+  const notes = block.notes?.trim();
+  const notesPart = notes ? ` · Catatan: ${notes}` : "";
+  return label ? `${time} · ${label}${notesPart}` : `${time}${notesPart}`;
 }
 
 function formatBusyBlockLabel(block: BusyBlock): string | null {
@@ -139,8 +143,9 @@ function BusyBlockContent({
 }) {
   const timeLabel = `${minutesToTime(startMinutes)}-${minutesToTime(endMinutes)}`;
   const slotCount = (endMinutes - startMinutes) / SLOT_MINUTES;
+  const notes = block.notes?.trim();
 
-  if (block.studentName || block.subjectName) {
+  if (block.studentName || block.subjectName || notes) {
     return (
       <span className="flex min-h-0 flex-col justify-center gap-0.5">
         <span className="block truncate text-xs font-semibold leading-tight">
@@ -154,6 +159,11 @@ function BusyBlockContent({
         {block.subjectName && slotCount >= 2 && (
           <span className="block truncate text-[11px] leading-tight text-muted-foreground">
             {block.subjectName}
+          </span>
+        )}
+        {notes && slotCount >= 2 && (
+          <span className="block truncate text-[11px] leading-tight text-muted-foreground">
+            Catatan: {notes}
           </span>
         )}
       </span>
@@ -186,6 +196,7 @@ export function SchedulingCalendar<B extends BusyBlock>({
   onBusyBlockClick,
   allowPastSlots = false,
   multiSelect,
+  weekAnchor,
 }: {
   busy: B[];
   selected: SlotSelection | null;
@@ -193,9 +204,16 @@ export function SchedulingCalendar<B extends BusyBlock>({
   onBusyBlockClick?: (block: B) => void;
   allowPastSlots?: boolean;
   multiSelect?: MultiSlotSelection;
+  /** When set, jump the week grid to the week containing this local date. */
+  weekAnchor?: Date | null;
 }) {
   const thisWeekStart = useMemo(() => startOfWeekLocal(todayLocal()), []);
   const [weekStart, setWeekStart] = useState(thisWeekStart);
+
+  useEffect(() => {
+    if (!weekAnchor) return;
+    setWeekStart(startOfWeekLocal(new Date(weekAnchor.getFullYear(), weekAnchor.getMonth(), weekAnchor.getDate())));
+  }, [weekAnchor]);
 
   const days = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDaysLocal(weekStart, i)),
@@ -468,10 +486,10 @@ export function SchedulingCalendar<B extends BusyBlock>({
                       block.cancelled
                         ? "border-destructive/40 bg-destructive/15 text-destructive"
                         : block.completed
-                          ? "border-border/60 bg-muted/60 text-muted-foreground"
+                          ? "border-success-600/40 bg-success-50 text-success-700"
                           : onBusyBlockClick
-                            ? "border-border bg-muted text-foreground hover:bg-muted-foreground/10"
-                            : "border-input bg-muted text-muted-foreground"
+                            ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/20"
+                            : "border-primary/20 bg-primary/10 text-primary"
                     }`}
                     style={{
                       top: ((bs - startMinutes) / SLOT_MINUTES) * PIXELS_PER_SLOT,

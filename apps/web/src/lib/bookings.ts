@@ -74,6 +74,18 @@ export interface Booking {
   completedByUserId: string | null;
   sessionNotes: string | null;
   sessionNotesUpdatedAt: string | null;
+  dailyRoomName?: string | null;
+  dailyRoomUrl?: string | null;
+  groupId?: string | null;
+  group?: {
+    id: string;
+    memberCount: number;
+    members: { bookingId: string; studentId: string; studentName: string }[];
+    meetingLink: string | null;
+    meetingAddress: string | null;
+    dailyRoomName: string | null;
+    dailyRoomUrl: string | null;
+  } | null;
   student: BookingParticipant;
   tutor: BookingParticipant;
   subject: { id: string; name: string };
@@ -380,6 +392,28 @@ export interface ScheduleSessionInput {
 export async function scheduleSession(input: ScheduleSessionInput): Promise<Booking> {
   return handle(
     await apiFetch("/bookings", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export interface ScheduleGroupSessionInput {
+  studentIds: string[];
+  startTime: string;
+  subjectId: string;
+  scheduledDate: string;
+  durationMinutes: AllowedBookingDurationMinutes;
+  mode: "ONLINE" | "OFFLINE";
+  notes?: string;
+  packageId?: string;
+}
+
+export async function scheduleGroupSession(
+  input: ScheduleGroupSessionInput,
+): Promise<{ groupId: string; bookings: Booking[]; primary: Booking }> {
+  return handle(
+    await apiFetch("/bookings/group", {
       method: "POST",
       body: JSON.stringify(input),
     }),

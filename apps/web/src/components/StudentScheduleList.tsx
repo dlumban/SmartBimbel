@@ -268,6 +268,7 @@ export function StudentScheduleList({ studentUserId }: { studentUserId: string }
                       <th className="px-3 py-2">Tanggal</th>
                       <th className="px-3 py-2">Waktu</th>
                       <th className="px-3 py-2">Mata pelajaran</th>
+                      <th className="px-3 py-2">Status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -290,6 +291,11 @@ export function StudentScheduleList({ studentUserId }: { studentUserId: string }
                           {formatSessionTimeRange(booking.scheduledAt, booking.durationMinutes)}
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">{booking.subject.name}</td>
+                        <td className="px-3 py-2">
+                          <Badge variant={BOOKING_STATUS_BADGE_VARIANT[booking.status]}>
+                            {BOOKING_STATUS_LABELS[booking.status]}
+                          </Badge>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

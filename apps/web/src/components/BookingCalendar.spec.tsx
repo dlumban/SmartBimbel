@@ -49,6 +49,25 @@ describe("BookingCalendar", () => {
     expect(screen.getByText("Matematika")).toBeInTheDocument();
   });
 
+  it("shows booking notes on month chips when present", async () => {
+    listAllBookings.mockResolvedValue([
+      makeBooking({ status: "CONFIRMED", notes: "Term 1" }),
+    ]);
+    render(<BookingCalendar />);
+
+    expect(await screen.findByText("Catatan: Term 1")).toBeInTheDocument();
+    expect(screen.getByTitle(/Catatan: Term 1/)).toBeInTheDocument();
+  });
+
+  it("styles completed sessions with the success palette", async () => {
+    listAllBookings.mockResolvedValue([makeBooking({ status: "COMPLETED" })]);
+    render(<BookingCalendar />);
+
+    const chip = await screen.findByTitle(/Budi Santoso · Matematika/);
+    expect(chip.className).toMatch(/bg-success-50/);
+    expect(chip.className).toMatch(/border-success-600/);
+  });
+
   it("excludes cancelled bookings when includeCancelled is false", async () => {
     listAllBookings.mockResolvedValue([makeBooking({ status: "CANCELLED" })]);
     render(<BookingCalendar includeCancelled={false} />);
@@ -71,5 +90,22 @@ describe("BookingCalendar", () => {
     fireEvent.click(screen.getByRole("button", { name: "Bulan" }));
     expect(await screen.findByText("15")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Minggu Sebelumnya/ })).not.toBeInTheDocument();
+  });
+
+  it("in scheduling mode, reports busy-block clicks from month chips", async () => {
+    const onSelect = vi.fn();
+    const onBusyBlockClick = vi.fn();
+    listAllBookings.mockResolvedValue([makeBooking({ status: "ACCEPTED" })]);
+
+    render(
+      <BookingCalendar selected={null} onSelect={onSelect} onBusyBlockClick={onBusyBlockClick} />,
+    );
+
+    fireEvent.click(await screen.findByTitle(/Budi Santoso · Matematika/));
+
+    expect(onBusyBlockClick).toHaveBeenCalledWith(
+      expect.objectContaining({ bookingId: "b1", studentName: "Budi Santoso" }),
+    );
+    expect(push).not.toHaveBeenCalled();
   });
 });

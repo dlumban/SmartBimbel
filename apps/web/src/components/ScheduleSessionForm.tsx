@@ -1,50 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, ErrorState, LoadingSpinner } from "@smartbimbel/ui";
-import { ACTIVE_BOOKING_STATUSES, AllowedBookingDurationMinutes } from "@smartbimbel/shared";
+import { AllowedBookingDurationMinutes } from "@smartbimbel/shared";
 import { getMyTutorProfile, TutorProfile } from "../lib/tutors";
 import { StudentListItem } from "../lib/students";
-import { Booking, listAllBookings, scheduleSession } from "../lib/bookings";
+import { scheduleGroupSession, scheduleSession } from "../lib/bookings";
 import { listActivePackages, TutoringPackage } from "../lib/packages";
 import { trackEvent } from "../lib/analytics";
 import { StudentPickerTable } from "./StudentPickerTable";
-import { BusyBlock, SchedulingCalendar, SlotSelection } from "./SchedulingCalendar";
+import { BookingCalendar, CalendarBusyBlock } from "./BookingCalendar";
+import { SlotSelection } from "./SchedulingCalendar";
 import { BookingDetail } from "./BookingDetail";
-
-const SCHEDULE_CALENDAR_STATUSES = new Set<Booking["status"]>([
-  ...ACTIVE_BOOKING_STATUSES,
-  "COMPLETED",
-  "CANCELLED",
-]);
-
-interface ScheduleBusyBlock extends BusyBlock {
-  bookingId: string;
-  completed?: boolean;
-}
-
-function toBusyBlock(b: Booking): ScheduleBusyBlock {
-  return {
-    scheduledAt: b.scheduledAt,
-    durationMinutes: b.durationMinutes,
-    bookingId: b.id,
-    studentName: b.student.user.name ?? "Siswa",
-    subjectName: b.subject.name,
-    completed: b.status === "COMPLETED",
-    cancelled: b.status === "CANCELLED",
-  };
-}
 
 export function ScheduleSessionForm() {
   const router = useRouter();
   const [tutor, setTutor] = useState<TutorProfile | null>(null);
-  const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [calendarReload, setCalendarReload] = useState(0);
 
-  const [student, setStudent] = useState<StudentListItem | null>(null);
+  const [students, setStudents] = useState<StudentListItem[]>([]);
+  const [studentsConfirmed, setStudentsConfirmed] = useState(false);
   const [selection, setSelection] = useState<SlotSelection | null>(null);
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
   const [subjectId, setSubjectId] = useState<string>("");
@@ -55,11 +34,9 @@ export function ScheduleSessionForm() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const refreshBookings = useCallback(() => listAllBookings().then(setBookings), []);
-
   useEffect(() => {
-    Promise.all([getMyTutorProfile(), refreshBookings(), listActivePackages()])
-      .then(([profile, , activePackages]) => {
+    Promise.all([getMyTutorProfile(), listActivePackages()])
+      .then(([profile, activePackages]) => {
         setTutor(profile);
         if (profile?.subjects.length === 1) setSubjectId(profile.subjects[0].id);
         if (profile?.teachingModes.length === 1) setMode(profile.teachingModes[0]);
@@ -67,12 +44,7 @@ export function ScheduleSessionForm() {
       })
       .catch(() => setLoadError("Gagal memuat profil dan jadwal Anda."))
       .finally(() => setLoading(false));
-  }, [refreshBookings]);
-
-  const busy = useMemo(
-    () => bookings.filter((b) => SCHEDULE_CALENDAR_STATUSES.has(b.status)).map(toBusyBlock),
-    [bookings],
-  );
+  }, []);
 
   if (loading) return <LoadingSpinner />;
   if (loadError || !tutor) {
@@ -85,40 +57,72 @@ export function ScheduleSessionForm() {
     : selection
       ? ((selection.slotCount * 30) as AllowedBookingDurationMinutes)
       : null;
-  const canSubmit = Boolean(student && selection && subjectId && mode && durationMinutes);
+  const isGroup = students.length >= 2;
+  const canSubmit = Boolean(
+    studentsConfirmed &&
+      students.length >= 1 &&
+      selection &&
+      subjectId &&
+      mode &&
+      durationMinutes &&
+      (!isGroup || students.length >= 2),
+  );
 
   function handleSelect(next: SlotSelection | null) {
     setEditingBookingId(null);
     setSelection(next);
+    setStudentsConfirmed(false);
+    setStudents([]);
   }
 
-  function handleBusyBlockClick(block: ScheduleBusyBlock) {
+  function handleBusyBlockClick(block: CalendarBusyBlock) {
     setSelection(null);
     setEditingBookingId(block.bookingId);
   }
 
   async function handleSubmit() {
-    if (!student || !selection || !mode || !durationMinutes) return;
+    if (!selection || !mode || !durationMinutes || students.length < 1) return;
     setSubmitError(null);
     setSubmitting(true);
     try {
-      const booking = await scheduleSession({
-        studentId: student.studentProfileId,
-        startTime: selection.startTime,
-        subjectId,
-        scheduledDate: selection.date,
-        durationMinutes,
-        mode,
-        notes: notes || undefined,
-        packageId: packageId || undefined,
-      });
-      void trackEvent("booking_requested", {
-        tutorId: tutor!.id,
-        subjectId,
-        durationMinutes,
-        mode,
-      });
-      router.push(`/bookings/${booking.id}`);
+      if (isGroup) {
+        const result = await scheduleGroupSession({
+          studentIds: students.map((s) => s.studentProfileId),
+          startTime: selection.startTime,
+          subjectId,
+          scheduledDate: selection.date,
+          durationMinutes,
+          mode,
+          notes: notes || undefined,
+          packageId: packageId || undefined,
+        });
+        void trackEvent("booking_requested", {
+          tutorId: tutor!.id,
+          subjectId,
+          durationMinutes,
+          mode,
+          groupSize: students.length,
+        });
+        router.push(`/bookings/${result.primary.id}`);
+      } else {
+        const booking = await scheduleSession({
+          studentId: students[0].studentProfileId,
+          startTime: selection.startTime,
+          subjectId,
+          scheduledDate: selection.date,
+          durationMinutes,
+          mode,
+          notes: notes || undefined,
+          packageId: packageId || undefined,
+        });
+        void trackEvent("booking_requested", {
+          tutorId: tutor!.id,
+          subjectId,
+          durationMinutes,
+          mode,
+        });
+        router.push(`/bookings/${booking.id}`);
+      }
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "Gagal menjadwalkan sesi.");
       setSubmitting(false);
@@ -132,42 +136,66 @@ export function ScheduleSessionForm() {
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-semibold">Kalender</h2>
         <p className="text-xs text-muted-foreground">
-          Klik setengah jam yang kosong untuk membuat sesi baru, atau klik sesi yang sudah ada untuk
-          melihat/mengubahnya.{" "}
+          Di tampilan Minggu, klik setengah jam yang kosong untuk membuat sesi baru, atau klik sesi
+          yang sudah ada untuk melihat/mengubahnya. Di tampilan Bulan, klik hari untuk membuka
+          minggu itu, atau klik chip sesi untuk detail. Pilih 2+ siswa untuk sesi grup.{" "}
           <Link href="/bookings/schedule/bulk" className="text-primary hover:underline">
             Jadwalkan massal
           </Link>
         </p>
-        <SchedulingCalendar
-          busy={busy}
+        <BookingCalendar
+          includeCancelled
           selected={selection}
           onSelect={handleSelect}
           onBusyBlockClick={handleBusyBlockClick}
-          allowPastSlots
+          reloadToken={calendarReload}
         />
       </section>
 
       {editingBookingId && (
         <section className="mx-auto flex w-full max-w-lg flex-col gap-2">
           <h2 className="text-sm font-semibold">Detail Sesi</h2>
-          <BookingDetail bookingId={editingBookingId} onUpdated={() => void refreshBookings()} />
+          <BookingDetail
+            bookingId={editingBookingId}
+            onUpdated={() => setCalendarReload((n) => n + 1)}
+          />
         </section>
       )}
 
       {selection &&
-        (!student ? (
-          <section className="flex flex-col gap-2">
+        (!studentsConfirmed ? (
+          <section className="flex flex-col gap-3">
             <h2 className="text-sm font-semibold">Pilih siswa</h2>
-            <StudentPickerTable onSelect={setStudent} />
+            <StudentPickerTable
+              multi
+              selected={students}
+              onChangeSelected={setStudents}
+            />
+            <Button
+              disabled={students.length < 1}
+              onClick={() => setStudentsConfirmed(true)}
+              className="self-start"
+            >
+              Lanjut ({students.length} siswa
+              {students.length >= 2 ? " — sesi grup" : ""})
+            </Button>
           </section>
         ) : (
           <div className="mx-auto flex w-full max-w-lg flex-col gap-6">
             <div className="flex items-center justify-between rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm">
               <span>
-                Siswa: <span className="font-medium">{student.name ?? "Tanpa nama"}</span>{" "}
-                {(student.phone ?? student.email) && `(${student.phone ?? student.email})`}
+                {isGroup ? "Sesi grup: " : "Siswa: "}
+                <span className="font-medium">
+                  {students.map((s) => s.name ?? "Tanpa nama").join(", ")}
+                </span>
               </span>
-              <Button variant="ghost" size="sm" onClick={() => setStudent(null)}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setStudentsConfirmed(false);
+                }}
+              >
                 Ganti
               </Button>
             </div>
@@ -263,7 +291,11 @@ export function ScheduleSessionForm() {
             </p>
 
             <Button disabled={!canSubmit || submitting} onClick={handleSubmit} className="w-full">
-              {submitting ? "Mengirim..." : "Jadwalkan Sesi"}
+              {submitting
+                ? "Mengirim..."
+                : isGroup
+                  ? `Jadwalkan Sesi Grup (${students.length})`
+                  : "Jadwalkan Sesi"}
             </Button>
           </div>
         ))}

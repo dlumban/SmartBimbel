@@ -221,6 +221,7 @@ model Subject {
   tutors             TutorProfile[]   @relation("TutorSubjects")
   studentsInterested StudentProfile[] @relation("StudentSubjectsOfInterest")
   bookings           Booking[]
+  bookingGroups      BookingGroup[]
 }
 
 model GradeLevel {
@@ -276,6 +277,7 @@ model TutorProfile {
   subjects          Subject[]          @relation("TutorSubjects")
   gradeLevels       GradeLevel[]       @relation("TutorGradeLevels")
   bookings          Booking[]          @relation("TutorBookings")
+  bookingGroups     BookingGroup[]     @relation("TutorBookingGroups")
   payouts           Payout[]
 
   @@index([city])
@@ -296,6 +298,7 @@ model StudentProfile {
 
   subjectsOfInterest Subject[] @relation("StudentSubjectsOfInterest")
   bookings           Booking[] @relation("StudentBookings")
+  homeworkSubmissions HomeworkSubmission[]
 }
 
 // ---------------------------------------------------------------------------
@@ -315,6 +318,10 @@ model Booking {
   // is derived from the package's totalPrice/sessionCount instead).
   packageId                  String?
   package                    TutoringPackage?        @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  // Phase 2 group sessions: optional shell linking N per-student bookings that
+  // share one calendar slot. Null for classic 1:1 bookings.
+  groupId                    String?
+  group                      BookingGroup?           @relation(fields: [groupId], references: [id], onDelete: SetNull)
   scheduledAt                DateTime
   durationMinutes            Int
   // Locked in at booking-request time from the tutor's hourlyRate x
@@ -387,31 +394,117 @@ model Booking {
   meetingSetByUserId         String?
   meetingSetByUser           User?                   @relation("BookingMeetingSetBy", fields: [meetingSetByUserId], references: [id], onDelete: SetNull)
   meetingSetAt               DateTime?
+  // In-app Daily.co room for ONLINE 1:1 sessions (Phase 2). Group sessions
+  // store these on BookingGroup instead; serializers prefer group values.
+  dailyRoomName              String?
+  dailyRoomUrl               String?
+  whiteboardSnapshot         Json?
   // Set when a CONFIRMED booking becomes COMPLETED (Task 6.1) - either the
   // tutor manually marking it done (completedByUserId set) or the
   // auto-complete safety-net job (completedByUserId null - "the system").
   completedAt                DateTime?
   completedByUserId          String?
   completedByUser            User?                   @relation("BookingCompletedBy", fields: [completedByUserId], references: [id], onDelete: SetNull)
-  // Free-text only, tutor-editable, student-read-only (Task 6.3) -
-  // deliberately not a structured progress-report model, which is
-  // explicitly PRD §6.2 (Phase 2) scope.
+  // Free-text session notes (Task 6.3). Structured ProgressReport is Phase 2.
   sessionNotes               String?
   sessionNotesUpdatedAt      DateTime?
   createdAt                  DateTime                @default(now())
   updatedAt                  DateTime                @updatedAt
 
-  conversation  Conversation?
-  transaction   Transaction?
-  review        Review?
-  statusHistory BookingStatusHistory[]
-  disputes      Dispute[]
-  attachments   BookingAttachment[]
+  conversation    Conversation?
+  transaction     Transaction?
+  review          Review?
+  statusHistory   BookingStatusHistory[]
+  disputes        Dispute[]
+  attachments     BookingAttachment[]
+  progressReport  ProgressReport?
+  homework        HomeworkAssignment[]
 
   @@index([studentId])
   @@index([tutorId])
   @@index([status])
   @@index([deletedAt])
+  @@index([groupId])
+}
+
+// Phase 2 group session shell: one calendar slot, N per-student Booking rows
+// (payments/reviews/notes stay per student). Shared meeting/Daily/whiteboard
+// live here so every member joins the same room.
+model BookingGroup {
+  id                 String        @id @default(cuid())
+  tutorId            String
+  tutor              TutorProfile  @relation("TutorBookingGroups", fields: [tutorId], references: [id], onDelete: Cascade)
+  subjectId          String
+  subject            Subject       @relation(fields: [subjectId], references: [id])
+  scheduledAt        DateTime
+  durationMinutes    Int
+  mode               TeachingMode
+  packageId          String?
+  package            TutoringPackage? @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  notes              String?
+  meetingLink        String?
+  meetingAddress     String?
+  meetingSetByUserId String?
+  meetingSetAt       DateTime?
+  dailyRoomName      String?
+  dailyRoomUrl       String?
+  whiteboardSnapshot Json?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  bookings Booking[]
+
+  @@index([tutorId])
+  @@index([scheduledAt])
+}
+
+// Structured post-session progress (Phase 2) - complements free-text sessionNotes.
+model ProgressReport {
+  id              String   @id @default(cuid())
+  bookingId       String   @unique
+  booking         Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  topicsCovered   String
+  strengths       String?
+  areasToImprove  String?
+  nextGoals       String?
+  overallScore    Int?
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model HomeworkAssignment {
+  id          String         @id @default(cuid())
+  bookingId   String
+  booking     Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  dueAt       DateTime?
+  status      HomeworkStatus @default(ASSIGNED)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  submissions HomeworkSubmission[]
+  attachments BookingAttachment[]
+
+  @@index([bookingId])
+}
+
+model HomeworkSubmission {
+  id            String              @id @default(cuid())
+  assignmentId  String
+  assignment    HomeworkAssignment  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  studentId     String
+  student       StudentProfile      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  content       String?
+  submittedAt   DateTime            @default(now())
+  tutorFeedback String?
+  reviewedAt    DateTime?
+
+  attachments BookingAttachment[]
+
+  @@unique([assignmentId, studentId])
+  @@index([studentId])
 }
 
 // Admin-managed fixed-price bundle a tutor can pick when scheduling a
@@ -431,6 +524,7 @@ model TutoringPackage {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   bookings        Booking[]
+  bookingGroups   BookingGroup[]
 }
 
 // Backs both an inline image embedded in sessionNotes' HTML (kind
@@ -443,6 +537,14 @@ model TutoringPackage {
 enum BookingAttachmentKind {
   INLINE_IMAGE
   DOCUMENT
+  HOMEWORK
+  HOMEWORK_SUBMISSION
+}
+
+enum HomeworkStatus {
+  ASSIGNED
+  SUBMITTED
+  REVIEWED
 }
 
 model BookingAttachment {
@@ -456,9 +558,16 @@ model BookingAttachment {
   mimeType         String
   sizeBytes        Int
   storagePath      String
+  // Optional links when kind is HOMEWORK / HOMEWORK_SUBMISSION (Phase 2).
+  homeworkAssignmentId String?
+  homeworkAssignment   HomeworkAssignment? @relation(fields: [homeworkAssignmentId], references: [id], onDelete: SetNull)
+  homeworkSubmissionId String?
+  homeworkSubmission   HomeworkSubmission? @relation(fields: [homeworkSubmissionId], references: [id], onDelete: SetNull)
   createdAt        DateTime              @default(now())
 
   @@index([bookingId])
+  @@index([homeworkAssignmentId])
+  @@index([homeworkSubmissionId])
 }
 
 // Immutable audit trail of every booking status change (Task 3.3) - who

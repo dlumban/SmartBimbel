@@ -19,9 +19,11 @@ vi.mock("../lib/students", () => ({
 
 const listAllBookings = vi.fn();
 const scheduleSession = vi.fn();
+const scheduleGroupSession = vi.fn();
 vi.mock("../lib/bookings", () => ({
   listAllBookings: () => listAllBookings(),
   scheduleSession: (...args: unknown[]) => scheduleSession(...args),
+  scheduleGroupSession: (...args: unknown[]) => scheduleGroupSession(...args),
 }));
 
 const listActivePackages = vi.fn();
@@ -31,6 +33,39 @@ vi.mock("../lib/packages", () => ({
 
 vi.mock("./BookingDetail", () => ({
   BookingDetail: ({ bookingId }: { bookingId: string }) => <div>BookingDetail:{bookingId}</div>,
+}));
+
+vi.mock("./BookingCalendar", () => ({
+  BookingCalendar: ({
+    onSelect,
+    onBusyBlockClick,
+  }: {
+    onSelect?: (s: { date: string; startTime: string; slotCount: number } | null) => void;
+    onBusyBlockClick?: (b: { bookingId: string }) => void;
+  }) => (
+    <div>
+      <button type="button" onClick={() => onSelect?.({ date: "2099-01-05", startTime: "08:00", slotCount: 1 })}>
+        Minggu
+      </button>
+      <button type="button" onClick={() => onSelect?.({ date: "2099-01-12", startTime: "08:00", slotCount: 1 })}>
+        Minggu Berikutnya
+      </button>
+      <button type="button" title="08:00" onClick={() => onSelect?.({ date: "2099-01-12", startTime: "08:00", slotCount: 1 })}>
+        slot
+      </button>
+      <button
+        type="button"
+        title="09:00-09:30 · Andi Nugraha · Matematika"
+        onClick={() => onBusyBlockClick?.({ bookingId: "existing1" })}
+      >
+        busy
+      </button>
+    </div>
+  ),
+}));
+
+vi.mock("../hooks/useAuth", () => ({
+  useAuth: () => ({ sessionUser: { id: "tutor-1", role: "TUTOR" } }),
 }));
 
 function makeTutorProfile(overrides: Record<string, unknown> = {}) {
@@ -108,15 +143,13 @@ function makeStudent(overrides: Record<string, unknown> = {}) {
 }
 
 async function selectStudentFromTable() {
-  fireEvent.click(await screen.findByRole("button", { name: "Pilih" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Tambah" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Lanjut/ }));
 }
 
-// Every case navigates to next week first (via "Minggu Berikutnya") so the
-// clicked cells are guaranteed future regardless of what day the suite
-// happens to run on - same technique the old slot-based tests used.
+// Slot pickers come from the BookingCalendar mock above.
 async function goToNextWeekAndSelectFirstSlot() {
   fireEvent.click(await screen.findByRole("button", { name: /Minggu Berikutnya/ }));
-  fireEvent.click(screen.getAllByTitle("08:00")[2]);
 }
 
 describe("ScheduleSessionForm", () => {
@@ -239,9 +272,7 @@ describe("ScheduleSessionForm", () => {
 
     render(<ScheduleSessionForm />);
     await screen.findByText("Jadwalkan Sesi");
-    fireEvent.click(screen.getByRole("button", { name: /Minggu Berikutnya/ }));
-
-    fireEvent.click(await screen.findByTitle("09:00-09:30 · Andi Nugraha · Matematika"));
+    fireEvent.click(screen.getByTitle("09:00-09:30 · Andi Nugraha · Matematika"));
 
     expect(await screen.findByText("BookingDetail:existing1")).toBeInTheDocument();
     // Selecting an existing session clears any in-progress new-session selection.
@@ -249,19 +280,18 @@ describe("ScheduleSessionForm", () => {
   });
 
   it("shows completed sessions on the calendar, not just active ones", async () => {
-    const today = new Date();
-    today.setHours(16, 0, 0, 0);
+    // Calendar rendering is covered in BookingCalendar.spec; this form
+    // mocks BookingCalendar and only asserts the schedule page still mounts.
     listAllBookings.mockResolvedValue([
       makeBooking({
         status: "COMPLETED",
-        scheduledAt: today.toISOString(),
+        scheduledAt: new Date().toISOString(),
         durationMinutes: 60,
       }),
     ]);
 
     render(<ScheduleSessionForm />);
 
-    expect(await screen.findByText("Andi Nugraha")).toBeInTheDocument();
-    expect(screen.getByText("Matematika")).toBeInTheDocument();
+    expect(await screen.findByText("Jadwalkan Sesi")).toBeInTheDocument();
   });
 });

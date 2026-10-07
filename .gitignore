@@ -45,3 +45,6 @@ apps/mobile/.pub-cache/
 
 # Local infra data
 .devdata/
+
+# CodeLens Graph local index
+.codelens/

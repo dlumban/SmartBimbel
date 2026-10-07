@@ -131,6 +131,8 @@ describe("StudentScheduleList", () => {
 
     expect(await screen.findByRole("checkbox", { name: /Pilih sesi/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Buat PDF/ })).toBeDisabled();
+    // Status column in Laporan Gabungan (same labels as the schedule table).
+    expect(screen.getAllByText("Terkonfirmasi").length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows an empty state when the student has no sessions", async () => {

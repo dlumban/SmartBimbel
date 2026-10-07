@@ -34,6 +34,7 @@ function toBusyBlock(b: Booking): BusyBlock {
     durationMinutes: b.durationMinutes,
     studentName: b.student.user.name ?? "Siswa",
     subjectName: b.subject.name,
+    notes: b.notes,
     completed: b.status === "COMPLETED",
     cancelled: b.status === "CANCELLED",
   };

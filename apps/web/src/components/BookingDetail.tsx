@@ -25,9 +25,12 @@ import {
 } from "../lib/bookings";
 import { getMyTutorProfile } from "../lib/tutors";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { JoinMeetingSection } from "./JoinMeetingSection";
 import { SessionCompletionSection } from "./SessionCompletionSection";
 import { SessionNotesSection } from "./SessionNotesSection";
+import { ProgressReportSection } from "./ProgressReportSection";
+import { HomeworkSection } from "./HomeworkSection";
 import { ReviewSection } from "./ReviewSection";
 
 const CANCELLABLE_STATUSES: Booking["status"][] = [
@@ -205,6 +208,24 @@ export function BookingDetail({
             </Badge>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">Dengan {counterpart?.name ?? "Pengguna"}</p>
+          {booking.group && booking.group.memberCount > 1 && (
+            <div className="mt-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+              <p className="font-medium">Sesi grup ({booking.group.memberCount} siswa)</p>
+              <ul className="mt-1 list-inside list-disc text-muted-foreground">
+                {booking.group.members.map((m) => (
+                  <li key={m.bookingId}>
+                    {isTutor && m.bookingId !== booking.id ? (
+                      <Link href={`/bookings/${m.bookingId}`} className="text-primary hover:underline">
+                        {m.studentName}
+                      </Link>
+                    ) : (
+                      m.studentName
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <p className="mt-2 text-sm text-foreground">{formatDateTime(booking.scheduledAt)}</p>
           <p className="text-sm text-muted-foreground">
             {booking.durationMinutes} menit &middot; {booking.mode === "ONLINE" ? "Online" : "Tatap muka"}
@@ -254,6 +275,13 @@ export function BookingDetail({
 
       {showSessionNotes && (
         <SessionNotesSection booking={booking} isTutor={isTutor} onUpdated={setBooking} />
+      )}
+
+      {isParticipant && (booking.status === "CONFIRMED" || booking.status === "COMPLETED") && (
+        <>
+          <ProgressReportSection bookingId={bookingId} isTutor={isTutor} />
+          <HomeworkSection bookingId={bookingId} isTutor={isTutor} />
+        </>
       )}
 
       {isStudent && booking.status === "COMPLETED" && <ReviewSection bookingId={bookingId} />}

@@ -1,6 +1,7 @@
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { Booking, fetchAttachmentBlob, listSessionAttachments } from "./bookings";
+import { getProgressReport, listHomework } from "./progress";
 import { sanitizeHtml } from "./sanitizeHtml";
 
 /** Max display size for report images inside the PDF layout (px). */
@@ -80,9 +81,48 @@ interface PreparedSection {
 
 async function prepareSection(booking: Booking): Promise<PreparedSection> {
   const notes = booking.sessionNotes ?? "";
-  const html = notes
+  let html = notes
     ? await hydrateNotesHtml(booking.id, notes)
     : "<p><em>Tidak ada catatan sesi.</em></p>";
+
+  try {
+    const report = await getProgressReport(booking.id);
+    if (report) {
+      html += `<h3 style="margin:16px 0 6px;font-size:14px;">Laporan Progress</h3>`;
+      html += `<p><strong>Topik:</strong> ${escapeHtml(report.topicsCovered)}</p>`;
+      if (report.strengths) {
+        html += `<p><strong>Kekuatan:</strong> ${escapeHtml(report.strengths)}</p>`;
+      }
+      if (report.areasToImprove) {
+        html += `<p><strong>Perbaikan:</strong> ${escapeHtml(report.areasToImprove)}</p>`;
+      }
+      if (report.nextGoals) {
+        html += `<p><strong>Tujuan:</strong> ${escapeHtml(report.nextGoals)}</p>`;
+      }
+      if (report.overallScore != null) {
+        html += `<p><strong>Skor:</strong> ${report.overallScore}/5</p>`;
+      }
+    }
+  } catch {
+    // optional
+  }
+
+  try {
+    const homework = await listHomework(booking.id);
+    if (homework.length > 0) {
+      html += `<h3 style="margin:16px 0 6px;font-size:14px;">Tugas</h3><ul>`;
+      for (const hw of homework) {
+        html += `<li><strong>${escapeHtml(hw.title)}</strong> — ${hw.status}`;
+        if (hw.submissions[0]?.content) {
+          html += `<br/><em>Jawaban:</em> ${escapeHtml(hw.submissions[0].content)}`;
+        }
+        html += `</li>`;
+      }
+      html += `</ul>`;
+    }
+  } catch {
+    // optional
+  }
 
   const imageDataUrls: string[] = [];
   try {

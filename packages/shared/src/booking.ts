@@ -55,6 +55,9 @@ export const REVIEW_EDIT_WINDOW_HOURS = 48;
 // prominent style as the session approaches.
 export const JOIN_MEETING_HIGHLIGHT_MINUTES_BEFORE = 10;
 
+/** Phase 2 group sessions: max students on one BookingGroup. */
+export const MAX_GROUP_SESSION_STUDENTS = 8;
+
 export type AllowedBookingDurationMinutes = (typeof ALLOWED_BOOKING_DURATIONS_MINUTES)[number];
 
 // PRD §6.1.D: meeting links must be Zoom or Google Meet (MVP uses external

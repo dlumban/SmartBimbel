@@ -25,6 +25,7 @@ import { AdminTransactionsModule } from "./admin-transactions/admin-transactions
 import { AnalyticsModule } from "./analytics/analytics.module";
 import { AccessLinksModule } from "./access-links/access-links.module";
 import { PackagesModule } from "./packages/packages.module";
+import { ProgressModule } from "./progress/progress.module";
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { PackagesModule } from "./packages/packages.module";
     AnalyticsModule,
     AccessLinksModule,
     PackagesModule,
+    ProgressModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

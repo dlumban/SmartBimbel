@@ -162,6 +162,39 @@ describe("SchedulingCalendar", () => {
     expect(screen.getByTitle("09:00-10:00 · Andi Nugraha · Matematika")).toBeInTheDocument();
   });
 
+  it("renders catatan on busy blocks when notes are provided", () => {
+    const block: EditableBusyBlock = {
+      id: "b1",
+      scheduledAt: new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate(), 9, 0).toISOString(),
+      durationMinutes: 60,
+      studentName: "Alana Vallery Tappy",
+      subjectName: "Bahasa Inggris",
+      notes: "Term 1",
+    };
+    render(<Harness busy={[block]} />);
+
+    expect(screen.getByText("Catatan: Term 1")).toBeInTheDocument();
+    expect(
+      screen.getByTitle("09:00-10:00 · Alana Vallery Tappy · Bahasa Inggris · Catatan: Term 1"),
+    ).toBeInTheDocument();
+  });
+
+  it("styles completed busy blocks with the success palette", () => {
+    const block: EditableBusyBlock = {
+      id: "b1",
+      scheduledAt: new Date(TODAY.getFullYear(), TODAY.getMonth(), TODAY.getDate(), 9, 0).toISOString(),
+      durationMinutes: 60,
+      studentName: "Andi Nugraha",
+      subjectName: "Matematika",
+      completed: true,
+    };
+    render(<Harness busy={[block]} />);
+
+    const chip = screen.getByTitle("09:00-10:00 · Andi Nugraha · Matematika");
+    expect(chip.className).toMatch(/bg-success-50/);
+    expect(chip.className).toMatch(/border-success-600/);
+  });
+
   it("renders the busy block as inert when onBusyBlockClick is not supplied", () => {
     const block: EditableBusyBlock = {
       id: "b1",

@@ -20,6 +20,7 @@ import {
   FREE_CANCELLATION_WINDOW_HOURS,
   getTimezoneForCity,
   isValidMeetingLink,
+  MAX_GROUP_SESSION_STUDENTS,
 } from "@smartbimbel/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -27,6 +28,7 @@ import { ChatService } from "../chat/chat.service";
 import { PaymentsService } from "../payments/payments.service";
 import { StorageService } from "../storage/storage.service";
 import { CreateBookingDto } from "./dto/create-booking.dto";
+import { CreateGroupBookingDto } from "./dto/create-group-booking.dto";
 import { DeclineBookingDto } from "./dto/decline-booking.dto";
 import { CounterProposeBookingDto } from "./dto/counter-propose-booking.dto";
 import { ProposeRescheduleDto } from "./dto/propose-reschedule.dto";
@@ -38,6 +40,7 @@ import { ListBookingsDto } from "./dto/list-bookings.dto";
 import { BOOKING_EXPIRY_QUEUE, SESSION_REMINDER_QUEUE } from "../jobs/jobs.module";
 import { BookingActor, BookingResponseAction, resolveBookingTransition } from "./booking-state-machine";
 import { SessionReminderJobData } from "./processors/session-reminder.processor";
+import { DailyService } from "./daily.service";
 
 export const RESPONSE_WINDOW_HOURS = 24;
 
@@ -56,11 +59,45 @@ const BOOKING_INCLUDE = {
   student: { include: { user: true } },
   tutor: { include: { user: true } },
   subject: true,
+  group: {
+    include: {
+      bookings: {
+        where: { deletedAt: null },
+        include: { student: { include: { user: true } } },
+        orderBy: { createdAt: "asc" as const },
+      },
+    },
+  },
 } as const;
 
 type BookingWithParticipants = { student: { userId: string }; tutor: { userId: string } };
 type BookingWithInclude = Prisma.BookingGetPayload<{ include: typeof BOOKING_INCLUDE }>;
 
+/** Overlay group meeting/Daily fields onto the booking for clients. */
+function presentBooking<T extends BookingWithInclude>(booking: T) {
+  if (!booking.group) return booking;
+  const members = booking.group.bookings.map((b) => ({
+    bookingId: b.id,
+    studentId: b.studentId,
+    studentName: b.student.user.name ?? "Siswa",
+  }));
+  return {
+    ...booking,
+    meetingLink: booking.group.meetingLink ?? booking.meetingLink,
+    meetingAddress: booking.group.meetingAddress ?? booking.meetingAddress,
+    dailyRoomName: booking.group.dailyRoomName ?? booking.dailyRoomName,
+    dailyRoomUrl: booking.group.dailyRoomUrl ?? booking.dailyRoomUrl,
+    group: {
+      id: booking.group.id,
+      memberCount: members.length,
+      members,
+      meetingLink: booking.group.meetingLink,
+      meetingAddress: booking.group.meetingAddress,
+      dailyRoomName: booking.group.dailyRoomName,
+      dailyRoomUrl: booking.group.dailyRoomUrl,
+    },
+  };
+}
 @Injectable()
 export class BookingsService {
   constructor(
@@ -69,6 +106,7 @@ export class BookingsService {
     private readonly chat: ChatService,
     private readonly payments: PaymentsService,
     private readonly storage: StorageService,
+    private readonly daily: DailyService,
     @InjectQueue(BOOKING_EXPIRY_QUEUE) private readonly expiryQueue: Queue,
     @InjectQueue(SESSION_REMINDER_QUEUE) private readonly reminderQueue: Queue,
   ) {}
@@ -297,7 +335,154 @@ export class BookingsService {
 
     await this.chat.createChannelForBooking(booking.id);
 
-    return booking;
+    return presentBooking(booking as BookingWithInclude);
+  }
+
+  /**
+   * Tutor-only group session (Phase 2): one BookingGroup + N CONFIRMED
+   * per-student bookings sharing the same slot. Overlap is checked once
+   * against the tutor calendar (group members occupy one slot together).
+   */
+  async createGroup(user: User, dto: CreateGroupBookingDto) {
+    if (user.role !== "TUTOR") {
+      throw new ForbiddenException("Only tutors can schedule group sessions.");
+    }
+    const uniqueStudentIds = [...new Set(dto.studentIds)];
+    if (uniqueStudentIds.length !== dto.studentIds.length) {
+      throw new BadRequestException("studentIds must be unique.");
+    }
+    if (uniqueStudentIds.length < 2 || uniqueStudentIds.length > MAX_GROUP_SESSION_STUDENTS) {
+      throw new BadRequestException(
+        `A group session needs between 2 and ${MAX_GROUP_SESSION_STUDENTS} students.`,
+      );
+    }
+
+    const tutorProfile = await this.prisma.tutorProfile.findUnique({ where: { userId: user.id } });
+    if (!tutorProfile) {
+      throw new NotFoundException("No tutor profile exists for this account yet.");
+    }
+    if (!tutorProfile.teachingModes.includes(dto.mode)) {
+      throw new BadRequestException(
+        `This tutor does not offer ${dto.mode.toLowerCase()} sessions.`,
+      );
+    }
+
+    const students = await this.prisma.studentProfile.findMany({
+      where: { id: { in: uniqueStudentIds } },
+    });
+    if (students.length !== uniqueStudentIds.length) {
+      throw new NotFoundException("One or more students were not found.");
+    }
+
+    let priceAmount: number;
+    if (dto.packageId) {
+      const pkg = await this.prisma.tutoringPackage.findUnique({ where: { id: dto.packageId } });
+      if (!pkg || !pkg.isActive) {
+        throw new BadRequestException("Unknown or inactive packageId.");
+      }
+      if (dto.durationMinutes !== pkg.durationMinutes) {
+        throw new BadRequestException(
+          `This package's sessions are fixed at ${pkg.durationMinutes} minutes.`,
+        );
+      }
+      priceAmount = Math.round(pkg.totalPrice / pkg.sessionCount);
+    } else {
+      if (tutorProfile.hourlyRate == null) {
+        throw new BadRequestException("This tutor has not set an hourly rate yet.");
+      }
+      priceAmount = Math.round((tutorProfile.hourlyRate * dto.durationMinutes) / 60);
+    }
+
+    const subject = await this.prisma.subject.findUnique({ where: { id: dto.subjectId } });
+    if (!subject) {
+      throw new BadRequestException(`Unknown subjectId: ${dto.subjectId}`);
+    }
+
+    const createdIds: string[] = [];
+    const group = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('booking:tutor'), hashtext(${tutorProfile.id}))`;
+
+      const tz = getTimezoneForCity(tutorProfile.city);
+      const scheduledAt = combineLocalDateTimeToUtc(dto.scheduledDate, dto.startTime, tz);
+      const endAt = new Date(scheduledAt.getTime() + dto.durationMinutes * 60 * 1000);
+
+      const existingBookings = await tx.booking.findMany({
+        where: { tutorId: tutorProfile.id, status: { in: [...ACTIVE_BOOKING_STATUSES] } },
+      });
+      const overlaps = existingBookings.some((b) => {
+        const existingEnd = new Date(b.scheduledAt.getTime() + b.durationMinutes * 60 * 1000);
+        return b.scheduledAt.getTime() < endAt.getTime() && existingEnd.getTime() > scheduledAt.getTime();
+      });
+      if (overlaps) {
+        throw new BadRequestException("This time is no longer available.");
+      }
+
+      const createdGroup = await tx.bookingGroup.create({
+        data: {
+          tutorId: tutorProfile.id,
+          subjectId: dto.subjectId,
+          scheduledAt,
+          durationMinutes: dto.durationMinutes,
+          mode: dto.mode,
+          packageId: dto.packageId,
+          notes: dto.notes,
+        },
+      });
+
+      for (const student of students) {
+        const created = await tx.booking.create({
+          data: {
+            studentId: student.id,
+            tutorId: tutorProfile.id,
+            subjectId: dto.subjectId,
+            packageId: dto.packageId,
+            groupId: createdGroup.id,
+            scheduledAt,
+            durationMinutes: dto.durationMinutes,
+            priceAmount,
+            mode: dto.mode,
+            notes: dto.notes,
+            status: "CONFIRMED",
+            requestedByUserId: user.id,
+          },
+        });
+        createdIds.push(created.id);
+        await tx.bookingStatusHistory.create({
+          data: {
+            bookingId: created.id,
+            fromStatus: null,
+            toStatus: "CONFIRMED",
+            changedByUserId: user.id,
+          },
+        });
+        await this.notifications.send(
+          student.userId,
+          "BOOKING_ACCEPTED",
+          { bookingId: created.id, groupId: createdGroup.id },
+          tx,
+        );
+        await tx.conversation.create({ data: { bookingId: created.id } });
+      }
+
+      return createdGroup;
+    });
+
+    for (const bookingId of createdIds) {
+      const row = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+      if (row) await this.scheduleSessionReminders(bookingId, row.scheduledAt);
+      await this.chat.createChannelForBooking(bookingId);
+    }
+
+    const bookings = [];
+    for (const id of createdIds) {
+      const row = await this.prisma.booking.findUnique({ where: { id }, include: BOOKING_INCLUDE });
+      if (row) bookings.push(presentBooking(row));
+    }
+    return {
+      groupId: group.id,
+      bookings,
+      primary: bookings[0],
+    };
   }
 
   async accept(user: User, id: string): Promise<Booking> {
@@ -750,7 +935,7 @@ export class BookingsService {
   // (OFFLINE) tied to the booking (Task 4.3) - stored on Booking, not
   // parsed out of chat messages, so Sprint 6's "Join Meeting" button has
   // a reliable field to read.
-  async setMeetingInfo(user: User, id: string, dto: SetMeetingDto): Promise<Booking> {
+  async setMeetingInfo(user: User, id: string, dto: SetMeetingDto) {
     const booking = await this.prisma.booking.findUnique({ where: { id }, include: BOOKING_INCLUDE });
     if (!booking) {
       throw new NotFoundException("No booking with that id exists.");
@@ -768,16 +953,33 @@ export class BookingsService {
       throw new BadRequestException("meetingAddress is required for an offline booking.");
     }
 
-    return this.prisma.booking.update({
-      where: { id },
-      data: {
-        meetingLink: booking.mode === "ONLINE" ? dto.meetingLink : null,
-        meetingAddress: booking.mode === "OFFLINE" ? dto.meetingAddress : null,
-        meetingSetByUserId: user.id,
-        meetingSetAt: new Date(),
-      },
-      include: BOOKING_INCLUDE,
-    });
+    const meetingData = {
+      meetingLink: booking.mode === "ONLINE" ? dto.meetingLink! : null,
+      meetingAddress: booking.mode === "OFFLINE" ? dto.meetingAddress! : null,
+      meetingSetByUserId: user.id,
+      meetingSetAt: new Date(),
+    };
+
+    // Group sessions share one meeting target for every member.
+    if (booking.groupId) {
+      await this.prisma.bookingGroup.update({
+        where: { id: booking.groupId },
+        data: meetingData,
+      });
+      const refreshed = await this.prisma.booking.findUnique({
+        where: { id },
+        include: BOOKING_INCLUDE,
+      });
+      return presentBooking(refreshed!);
+    }
+
+    return presentBooking(
+      await this.prisma.booking.update({
+        where: { id },
+        data: meetingData,
+        include: BOOKING_INCLUDE,
+      }),
+    );
   }
 
   // Manual "Tandai Selesai" (Task 6.1) - tutor-only per the product
@@ -1081,13 +1283,13 @@ export class BookingsService {
       throw new NotFoundException("No booking with that id exists.");
     }
     this.actorRoleFor(user, booking);
-    return booking;
+    return presentBooking(booking);
   }
 
   async findMany(user: User, query: ListBookingsDto = {}) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-    const empty = { data: [] as Booking[], total: 0, page, limit };
+    const empty = { data: [] as ReturnType<typeof presentBooking>[], total: 0, page, limit };
 
     let scopeWhere: Prisma.BookingWhereInput;
     if (user.role === "STUDENT") {
@@ -1111,8 +1313,6 @@ export class BookingsService {
       AND: [scopeWhere, { deletedAt: null }, ...(bucketWhere ? [bucketWhere] : [])],
     };
 
-    // Past/cancelled read most-recent-first; upcoming reads soonest-first -
-    // whichever ordering is most useful to scan for that tab.
     const orderDirection = query.bucket === "upcoming" || !query.bucket ? "asc" : "desc";
 
     const [data, total] = await Promise.all([
@@ -1126,7 +1326,7 @@ export class BookingsService {
       this.prisma.booking.count({ where }),
     ]);
 
-    return { data, total, page, limit };
+    return { data: data.map(presentBooking), total, page, limit };
   }
 
   // Shared bucketing rule (Task 3.4): kept in this single backend query
@@ -1160,6 +1360,98 @@ export class BookingsService {
       where: { bookingId: id },
       orderBy: { createdAt: "asc" },
     });
+  }
+
+  /**
+   * Ensure a Daily room exists for an ONLINE booking (or its group), then
+   * issue a meeting token for the current participant.
+   */
+  async getSessionToken(user: User, id: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id },
+      include: BOOKING_INCLUDE,
+    });
+    if (!booking || booking.deletedAt) {
+      throw new NotFoundException("No booking with that id exists.");
+    }
+    const actor = this.actorRoleFor(user, booking);
+    if (booking.mode !== "ONLINE") {
+      throw new BadRequestException("In-app video is only available for online sessions.");
+    }
+    if (!this.daily.isConfigured()) {
+      throw new BadRequestException(
+        "In-app video is not configured. Use the Zoom/Meet link instead.",
+      );
+    }
+
+    let roomName = booking.group?.dailyRoomName ?? booking.dailyRoomName;
+    let roomUrl = booking.group?.dailyRoomUrl ?? booking.dailyRoomUrl;
+
+    if (!roomName || !roomUrl) {
+      const name = `sb-${booking.groupId ?? booking.id}`.slice(0, 64);
+      const room = await this.daily.createRoom(name);
+      roomName = room.name;
+      roomUrl = room.url;
+      if (booking.groupId) {
+        await this.prisma.bookingGroup.update({
+          where: { id: booking.groupId },
+          data: { dailyRoomName: roomName, dailyRoomUrl: roomUrl },
+        });
+      } else {
+        await this.prisma.booking.update({
+          where: { id },
+          data: { dailyRoomName: roomName, dailyRoomUrl: roomUrl },
+        });
+      }
+    }
+
+    const displayName =
+      actor === "TUTOR"
+        ? (booking.tutor.user.name ?? "Tutor")
+        : (booking.student.user.name ?? "Siswa");
+    const token = await this.daily.createMeetingToken(roomName, displayName, actor === "TUTOR");
+
+    return {
+      roomUrl,
+      roomName,
+      token,
+      canEditWhiteboard: actor === "TUTOR",
+      dailyConfigured: true,
+    };
+  }
+
+  async getWhiteboard(user: User, id: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id },
+      include: BOOKING_INCLUDE,
+    });
+    if (!booking || booking.deletedAt) {
+      throw new NotFoundException("No booking with that id exists.");
+    }
+    this.actorRoleFor(user, booking);
+    const snapshot = booking.group?.whiteboardSnapshot ?? booking.whiteboardSnapshot;
+    return { snapshot: snapshot ?? null };
+  }
+
+  async putWhiteboard(user: User, id: string, snapshot: unknown) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id },
+      include: BOOKING_INCLUDE,
+    });
+    if (!booking || booking.deletedAt) {
+      throw new NotFoundException("No booking with that id exists.");
+    }
+    this.actorRoleFor(user, booking);
+    if (typeof snapshot !== "object" || snapshot === null) {
+      throw new BadRequestException("snapshot must be a JSON object.");
+    }
+    const data = { whiteboardSnapshot: snapshot as Prisma.InputJsonValue };
+    if (booking.groupId) {
+      await this.prisma.bookingGroup.update({ where: { id: booking.groupId }, data });
+    } else {
+      await this.prisma.booking.update({ where: { id }, data });
+    }
+    return { ok: true as const };
   }
 
   private actorRoleFor(user: User, booking: BookingWithParticipants): BookingActor {

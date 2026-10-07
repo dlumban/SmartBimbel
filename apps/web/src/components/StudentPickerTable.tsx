@@ -2,12 +2,26 @@
 
 import { useEffect, useState } from "react";
 import { Button, ErrorState, Input, LoadingSpinner } from "@smartbimbel/ui";
+import { MAX_GROUP_SESSION_STUDENTS } from "@smartbimbel/shared";
 import { listStudents, StudentListItem } from "../lib/students";
 
 const LIMIT = 10;
 
-/** Paginated, searchable table of students for a tutor to pick from when scheduling a session. */
-export function StudentPickerTable({ onSelect }: { onSelect: (student: StudentListItem) => void }) {
+/**
+ * Paginated student picker. Single-select (default) or multi-select for
+ * Phase 2 group sessions (2–MAX_GROUP_SESSION_STUDENTS).
+ */
+export function StudentPickerTable({
+  onSelect,
+  multi = false,
+  selected = [],
+  onChangeSelected,
+}: {
+  onSelect?: (student: StudentListItem) => void;
+  multi?: boolean;
+  selected?: StudentListItem[];
+  onChangeSelected?: (students: StudentListItem[]) => void;
+}) {
   const [q, setQ] = useState("");
   const [appliedQ, setAppliedQ] = useState("");
   const [page, setPage] = useState(1);
@@ -37,6 +51,20 @@ export function StudentPickerTable({ onSelect }: { onSelect: (student: StudentLi
     setAppliedQ(q);
   }
 
+  function toggle(student: StudentListItem) {
+    if (!multi || !onChangeSelected) {
+      onSelect?.(student);
+      return;
+    }
+    const exists = selected.some((s) => s.studentProfileId === student.studentProfileId);
+    if (exists) {
+      onChangeSelected(selected.filter((s) => s.studentProfileId !== student.studentProfileId));
+      return;
+    }
+    if (selected.length >= MAX_GROUP_SESSION_STUDENTS) return;
+    onChangeSelected([...selected, student]);
+  }
+
   const totalPages = Math.max(1, Math.ceil(total / LIMIT));
 
   return (
@@ -53,6 +81,14 @@ export function StudentPickerTable({ onSelect }: { onSelect: (student: StudentLi
           Cari
         </Button>
       </form>
+
+      {multi && (
+        <p className="text-xs text-muted-foreground">
+          Dipilih {selected.length} / {MAX_GROUP_SESSION_STUDENTS} siswa
+          {selected.length > 0 &&
+            `: ${selected.map((s) => s.name ?? "Tanpa nama").join(", ")}`}
+        </p>
+      )}
 
       {loading ? (
         <LoadingSpinner />
@@ -78,20 +114,32 @@ export function StudentPickerTable({ onSelect }: { onSelect: (student: StudentLi
                     </td>
                   </tr>
                 ) : (
-                  students.map((s) => (
-                    <tr key={s.studentProfileId} className="border-t border-border">
-                      <td className="px-3 py-2 font-medium text-foreground">
-                        {s.name ?? "Tanpa nama"}
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">{s.phone ?? "-"}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{s.email ?? "-"}</td>
-                      <td className="px-3 py-2 text-right">
-                        <Button size="sm" onClick={() => onSelect(s)}>
-                          Pilih
-                        </Button>
-                      </td>
-                    </tr>
-                  ))
+                  students.map((s) => {
+                    const isSelected = selected.some((x) => x.studentProfileId === s.studentProfileId);
+                    return (
+                      <tr key={s.studentProfileId} className="border-t border-border">
+                        <td className="px-3 py-2 font-medium text-foreground">
+                          {s.name ?? "Tanpa nama"}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">{s.phone ?? "-"}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{s.email ?? "-"}</td>
+                        <td className="px-3 py-2 text-right">
+                          <Button
+                            size="sm"
+                            variant={isSelected ? "secondary" : "primary"}
+                            onClick={() => toggle(s)}
+                            disabled={
+                              multi &&
+                              !isSelected &&
+                              selected.length >= MAX_GROUP_SESSION_STUDENTS
+                            }
+                          >
+                            {multi ? (isSelected ? "Hapus" : "Tambah") : "Pilih"}
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
